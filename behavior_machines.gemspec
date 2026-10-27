@@ -16,7 +16,7 @@ Gem::Specification.new do |spec|
     exactly once, in the same call, so leaves can own real resources. Pure Ruby, with an optional
     native backend built on the behavior-machines Rust crate, and leaves for state_machines objects.
   DESC
-  spec.homepage = 'https://github.com/seuros/behavior-machines'
+  spec.homepage = 'https://github.com/seuros/behavior_machines'
   spec.license = 'BSD-3-Clause'
   spec.required_ruby_version = '>= 4.0.0'
   spec.platform = Gem::Platform::RUBY

@@ -75,7 +75,7 @@ end
 
 task default: :test
 
-GITHUB_REPO = 'seuros/behavior-machines'
+GITHUB_REPO = 'seuros/behavior_machines'
 RUBYGEMS_VERSIONS_URL = "https://rubygems.org/api/v1/versions/#{GEMSPEC.name}.json".freeze
 
 # Every gem the release workflow attaches to a GitHub Release for a version,
