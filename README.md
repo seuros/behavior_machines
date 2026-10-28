@@ -122,6 +122,24 @@ $ BEHAVIOR_MACHINES_NATIVE=1 ruby app.rb
 Leaves stay Ruby, so the gain is limited to the tree walk itself. The test
 suite runs against both backends (`bundle exec rake test:both`).
 
+## Releases
+
+Release Please manages the Ruby gem and both publishable Rust crates. Use
+conventional commits and merge its release PR to update versions, changelogs,
+the release manifest, and workspace dependency requirements. Do not push
+hand-written version bumps or changelog entries.
+
+The release manifest records the last released version of each package, not
+the next planned version. Circuit is registered at its published `0.1.0`;
+its one-time `release-as` override requests `0.3.0` in the next release PR.
+Remove that override from `release-please-config.json` after the release so
+later versions are calculated from conventional commits.
+
+Crate-only releases do not trigger Ruby gem publishing. The workflow creates
+GitHub releases for the crates but does not upload them to crates.io. After
+merging the release PR and checking out its release tag, run the Rust tests
+and a `cargo publish --dry-run` for the relevant crate before publishing.
+
 ## License
 
 BSD-3-Clause. See [LICENSE](LICENSE).

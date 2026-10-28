@@ -20,6 +20,14 @@
         "README.md"
       ],
       "initial-version": "0.1.0"
+    },
+    "ext/behavior_machines_native/circuit": {
+      "release-type": "rust",
+      "package-name": "behavior-machines-circuit",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
+      "initial-version": "0.1.0",
+      "release-as": "0.3.0"
     }
   }
 }
