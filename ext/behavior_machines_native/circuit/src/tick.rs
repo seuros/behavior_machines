@@ -1,6 +1,6 @@
 //! Driving a lowered tree: state in, schedule out.
 //!
-//! # Every leaf must be pure
+//! # Single-pass evaluation requires pure leaves
 //!
 //! The circuit computes a whole tick in one pass, which means it needs every
 //! leaf's status **before** it can say which leaves the tick reaches. So the
@@ -16,9 +16,9 @@
 //! This is not a gap in the lowering, it is forced. An ordered composite ticks
 //! its next child only if the previous one succeeded, in the same tick, so a
 //! single circuit evaluation cannot both order the effects and compute the
-//! arbitration. Lowering a tree with effectful actions needs the leaves split
-//! into conditions and actions at compile time, with the circuit choosing an
-//! action set the host then runs — a different interface, and not this one.
+//! arbitration. [`crate::Executor`] provides a separate staged interface that
+//! classifies leaves as conditions/actions and evaluates again as reached
+//! leaves produce their results. This single-pass interface remains pure.
 //!
 //! [`Schedule::reached`] is still reported per node, so a host that wants the
 //! engine's observer events can emit exactly the ones a tree walk would.
@@ -153,8 +153,8 @@ impl Lowered {
     /// Evaluates one tick, advancing `state`.
     ///
     /// `leaf_status` holds one status per leaf, in leaf order, which the host
-    /// produced by ticking every leaf. See the [module docs](self) for why
-    /// that requires the leaves to be pure.
+    /// produced by ticking every leaf. This requires pure leaves; use
+    /// [`crate::Executor`] for staged, effectful execution.
     ///
     /// # Errors
     ///

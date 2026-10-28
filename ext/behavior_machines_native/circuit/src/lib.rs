@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod builder;
+mod execute;
 mod lower;
 mod plan;
 mod status;
@@ -14,6 +15,7 @@ mod wire;
 mod test_support;
 
 pub use builder::{Bit, Builder, Count};
+pub use execute::{Action, Condition, ExecutionLeaf, Executor};
 pub use lower::{InvariantError, LowerError, Lowered, Outputs};
 pub use plan::Plan;
 pub use status::StatusBits;

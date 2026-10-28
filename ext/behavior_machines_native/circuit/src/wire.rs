@@ -42,7 +42,7 @@ impl Wire {
 ///
 /// Terms are kept sorted by wire with duplicates combined, so two affine forms
 /// that describe the same sum compare equal. That is sound only because every
-/// value is a small integer (see the [module docs](self)).
+/// value in a lowered tree is a small integer, exactly representable in `f32`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Affine {
     bias: f32,

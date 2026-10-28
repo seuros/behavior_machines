@@ -41,13 +41,17 @@ jobs:
           echo "::group::Running Rust tests"
           time cargo test -p behavior-machines
           time cargo test -p behavior-machines --all-features
+          time cargo test -p behavior-machines-circuit
+          cargo run -p behavior-machines-circuit --example inference
           echo "::endgroup::"
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features
 
       - name: Build for a no_std target
-        run: cargo build -p behavior-machines --target thumbv7em-none-eabihf --all-features
+        run: |
+          cargo build -p behavior-machines --target thumbv7em-none-eabihf --all-features
+          cargo build -p behavior-machines-circuit --target thumbv7em-none-eabihf
 
       - name: Check crate can be published
         run: |

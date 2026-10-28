@@ -157,7 +157,7 @@ struct Arbitration {
 /// Everything the circuit computes, as wires into its value table.
 #[derive(Clone, Debug)]
 pub struct Outputs {
-    /// Per node, in [`NodeId`] order: the status it returns **if** reached.
+    /// Per node, in [`behavior_machines::NodeId`] order: the status it returns **if** reached.
     /// Meaningless where [`Outputs::reached`] is clear.
     pub status: Vec<StatusBits>,
     /// Per node: the tick visited it, so it was ticked and should be reported.
