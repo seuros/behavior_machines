@@ -93,15 +93,15 @@ fn depth_does_not_grow_with_width() {
         }
     }
 
-    assert_eq!(composite(4, true).circuit().depth(), 5);
-    assert_eq!(composite(4, false).circuit().depth(), 7);
+    assert_eq!(composite(4, true).circuit().depth(), 4);
+    assert_eq!(composite(4, false).circuit().depth(), 6);
 }
 
 #[test]
 fn operations_grow_linearly_in_width() {
     // The marginal cost of a child, measured between two widths so the
     // composite's fixed overhead cancels.
-    for (reactive, expected) in [(true, 8), (false, 12)] {
+    for (reactive, expected) in [(true, 7), (false, 10)] {
         let wide = composite(32, reactive).circuit().ops().len();
         let narrow = composite(16, reactive).circuit().ops().len();
         assert_eq!(

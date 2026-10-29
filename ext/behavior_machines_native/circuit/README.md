@@ -171,8 +171,8 @@ The consequence is the measured cost, which `lower/tests.rs` pins:
 
 | | depth | operations per child |
 |---|---|---|
-| reactive composite | 5, any width | 8 |
-| memory composite | 7, any width | 12 |
+| reactive composite | 4, any width | 7 |
+| memory composite | 6, any width | 10 |
 
 **Depth does not grow with the number of children.** A prefix test reads a sum
 of bits and a sum is free, so a wider composite widens a layer rather than

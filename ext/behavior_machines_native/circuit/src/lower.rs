@@ -50,11 +50,11 @@
 //!
 //! A reactive composite is the same lowering with `cursor` pinned to zero,
 //! where `before_i` folds to a constant and the per-child cost drops from
-//! about twelve operations to about eight.
+//! about ten operations to about seven.
 //!
 //! The depth does not grow with the number of children: every prefix test
 //! reads a sum of bits, and a sum is free. Measured, an ordered composite
-//! saturates at depth 5 reactive and 7 with memory from four children up to
+//! saturates at depth 4 reactive and 6 with memory from four children up to
 //! any width, which `lower/tests.rs` pins.
 
 use alloc::vec;
@@ -473,7 +473,11 @@ fn lower_ordered(
     for index in 0..children.len() {
         // `stop` is at-most-one-hot, so the running total of earlier stops is
         // itself a bit and costs nothing to form.
-        after_stop.push(Bit::or_disjoint(stop.iter().cloned()));
+        after_stop.push(if cursor.is_some() {
+            Bit::constant(false)
+        } else {
+            Bit::or_disjoint(stop.iter().cloned())
+        });
         reach.push(builder.and(&all_passed[index], &!before[index].clone()));
         stop.push(builder.and(&all_passed[index], &blocked[index]));
     }
@@ -551,7 +555,10 @@ fn reach(
     for index in 0..flat.len() {
         was_running.push(Bit::assume(plan.running_wire(index, builder)));
         halted[index] = builder.and(&halt_called[index], &was_running[index]);
-        untouched.push(builder.and(&!reached[index].clone(), &!halted[index].clone()));
+        untouched.push(!Bit::or_disjoint([
+            reached[index].clone(),
+            halted[index].clone(),
+        ]));
 
         match &flat[index] {
             Flat::Leaf { .. } | Flat::Constant(_) => {}

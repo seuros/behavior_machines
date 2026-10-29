@@ -143,6 +143,9 @@ pub enum TickError {
         /// How many the state holds.
         given: usize,
     },
+    /// The state's cursors did not come from this lowered tree.
+    #[error("state has {given} cursors, tree has {expected}")]
+    CursorShape { expected: usize, given: usize },
     /// The circuit rejected the assembled input vector, which is a bug in this
     /// crate rather than in the caller.
     #[error("circuit rejected its own input vector: {0}")]
@@ -158,8 +161,8 @@ impl Lowered {
     ///
     /// # Errors
     ///
-    /// Returns [`TickError::LeafCount`] or [`TickError::StateShape`] if the
-    /// arguments do not match this tree.
+    /// Returns [`TickError::LeafCount`], [`TickError::StateShape`], or
+    /// [`TickError::CursorShape`] if the arguments do not match this tree.
     pub fn evaluate(
         &self,
         state: &mut State,
@@ -176,6 +179,12 @@ impl Lowered {
             return Err(TickError::StateShape {
                 expected: plan.node_count(),
                 given: state.running.len(),
+            });
+        }
+        if state.cursor.len() != plan.cursor_count() {
+            return Err(TickError::CursorShape {
+                expected: plan.cursor_count(),
+                given: state.cursor.len(),
             });
         }
 

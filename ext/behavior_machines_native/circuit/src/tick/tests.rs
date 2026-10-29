@@ -1,5 +1,7 @@
 use super::*;
 
+use behavior_machines::Node;
+
 use crate::test_support::{leaf, lower, two_leaf_sequence};
 
 fn lowered() -> Lowered {
@@ -41,6 +43,16 @@ fn a_state_from_another_tree_is_rejected() {
             given: 1
         }),
     );
+
+    let reactive = lower(&Node::reactive_sequence([leaf(), leaf()]));
+    for (tree, from, expected, given) in [(&lowered, &reactive, 1, 0), (&reactive, &lowered, 0, 1)]
+    {
+        let mut state = State::initial(from);
+        assert_eq!(
+            tree.evaluate(&mut state, &[Status::Failure, Status::Success]),
+            Err(TickError::CursorShape { expected, given }),
+        );
+    }
 }
 
 #[test]
