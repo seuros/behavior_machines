@@ -7,6 +7,8 @@ require_relative 'behavior_machines/definition'
 require_relative 'behavior_machines/engine'
 require_relative 'behavior_machines/tree'
 require_relative 'behavior_machines/machine'
+require 'deadline_machines'
+
 require_relative 'behavior_machines/native_extension'
 
 # Behavior trees with explicit halt semantics, following the behavior-tree
@@ -15,8 +17,8 @@ module BehaviorMachines
   STATUSES = %i[success failure running].freeze
 
   class << self
-    # The current monotonic time in nanoseconds.
-    def now = Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
+    # The current monotonic time in nanoseconds, from the family's clock.
+    def now = DeadlineMachines.clock.now_ns
 
     # Whether the native backend is loaded (opt-in, see NativeExtension).
     def native_available? = NativeExtension.loaded?

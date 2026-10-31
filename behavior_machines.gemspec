@@ -32,6 +32,7 @@ Gem::Specification.new do |spec|
   spec.files = lib_files + %w[LICENSE README.md]
   spec.require_paths = ['lib']
 
+  spec.add_dependency 'deadline_machines', '>= 0.1'
   spec.add_dependency 'state_machines', '>= 0.202'
 
   spec.add_development_dependency 'minitest', '~> 6.0'

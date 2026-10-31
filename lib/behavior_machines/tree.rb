@@ -37,6 +37,7 @@ module BehaviorMachines
     # `ticked(node_id, status)` and `halted(node_id)`; node ids number the
     # definition in pre-order, and children report before their parent.
     def tick(ctx = nil, now: BehaviorMachines.now, observer: nil)
+      DeadlineMachines.check!
       now = BehaviorMachines.check_time(now)
       exclusive { @engine.tick(ctx, now, Observers.wrap(observer)) }
     end
