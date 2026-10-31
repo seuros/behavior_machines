@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
 
   spec.add_dependency 'deadline_machines', '>= 0.1'
-  spec.add_dependency 'state_machines', '>= 0.202'
+  spec.add_development_dependency 'state_machines', '>= 0.202'
 
   spec.add_development_dependency 'minitest', '~> 6.0'
   spec.add_development_dependency 'rake', '~> 13.0'
