@@ -11,7 +11,7 @@ require_relative '../lib/behavior_machines/version'
 module BehaviorMachinesRelease
   ROOT = File.expand_path('..', __dir__)
   GEM = 'behavior_machines'
-  REPOSITORY = 'seuros/behavior-machines'
+  REPOSITORY = "seuros/#{GEM}"
   HOST = 'https://rubygems.org'
   Artifact = Data.define(:path, :platform, :sha256)
   class Error < StandardError; end
