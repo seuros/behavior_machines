@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.4.0...behavior_machines/v0.5.0) (2026-11-01)
+
+
+### Features
+
+* verify release gem checksums before pushing ([9728089](https://github.com/seuros/behavior_machines/commit/9728089643b74dababadc3caca62c2ffc8f23b0b))
+
+
+### Bug Fixes
+
+* enable the rb-sys compiled fallback so new Rubies can build ([f0f298f](https://github.com/seuros/behavior_machines/commit/f0f298f62cbae6014a1fc0218d7d9b7ce8f78661))
+
 ## [0.4.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.3.1...behavior_machines/v0.4.0) (2026-11-01)
 
 
