@@ -22,8 +22,28 @@ class ParityTest < Minitest::Test
     end
   end
 
+  # MOCKED: ticks whatever it was given, status or not.
+  class BadLeaf
+    def initialize(status) = @status = status
+    def tick(_ctx, _now) = @status
+    def inspect = '#<BadLeaf>'
+  end
+
+  INVALID_UTF8_SYMBOL = [255].pack('C').b.to_sym
+  BAD_STATUSES = [INVALID_UTF8_SYMBOL, :bogus, 'success', nil].freeze
+
   def setup
     skip 'native extension not loaded' unless BM.native_available?
+  end
+
+  def test_a_bad_status_raises_identically_on_both_backends
+    BAD_STATUSES.each do |bad|
+      runs = %i[ruby native].map do |backend|
+        tree = BM::Tree.new(BM.leaf(BadLeaf.new(bad)), backend:)
+        assert_raises(BM::InvalidStatusError) { tree.tick(nil, now: 0) }.message
+      end
+      assert_equal runs[0], runs[1], "status=#{bad.inspect}"
+    end
   end
 
   def test_every_shape_behaves_identically_on_both_backends

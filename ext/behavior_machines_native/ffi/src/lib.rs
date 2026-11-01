@@ -21,6 +21,17 @@ use magnus::{
     TypedData, Value, function, gc, method,
 };
 
+const SUCCESS: &str = "success";
+const FAILURE: &str = "failure";
+const RUNNING: &str = "running";
+
+/// The status Symbols `BehaviorMachines::STATUSES` names, in the same order.
+const STATUSES: [(&str, Status); 3] = [
+    (SUCCESS, Status::Success),
+    (FAILURE, Status::Failure),
+    (RUNNING, Status::Running),
+];
+
 /// A Ruby leaf object; `halts` caches `respond_to?(:halt)`. `active` mirrors
 /// the leaf's activation, so a tick skipped after an error can keep an active
 /// leaf running (cleanup then halts it) instead of ending it unhalted.
@@ -219,8 +230,9 @@ fn node_from(
     spec: RArray,
     leaves: &mut Vec<Opaque<Value>>,
 ) -> Result<Node<RubyLeaf>, Error> {
-    let node = match name(spec.entry(0)?)?.as_ref() {
-        "leaf" => {
+    let kind: Symbol = spec.entry(0)?;
+    let node = match name(kind).as_deref() {
+        Some("leaf") => {
             let object: Value = spec.entry(1)?;
             leaves.push(object.into());
             Node::Leaf(RubyLeaf {
@@ -229,24 +241,24 @@ fn node_from(
                 active: Cell::new(false),
             })
         }
-        "constant" if is_success(spec.entry(1)?)? => Node::AlwaysSuccess,
-        "constant" => Node::AlwaysFailure,
-        "sleep" => Node::Sleep(Duration::from_nanos(spec.entry(1)?)),
-        "ordered" => {
+        Some("constant") if is_success(ruby, spec.entry(1)?) => Node::AlwaysSuccess,
+        Some("constant") => Node::AlwaysFailure,
+        Some("sleep") => Node::Sleep(Duration::from_nanos(spec.entry(1)?)),
+        Some("ordered") => {
             let children = children_from(ruby, spec.entry(1)?, leaves)?;
-            match (is_success(spec.entry(2)?)?, spec.entry::<bool>(3)?) {
+            match (is_success(ruby, spec.entry(2)?), spec.entry::<bool>(3)?) {
                 (true, false) => Node::Sequence(children),
                 (true, true) => Node::ReactiveSequence(children),
                 (false, false) => Node::Fallback(children),
                 (false, true) => Node::ReactiveFallback(children),
             }
         }
-        "parallel" => Node::Parallel {
+        Some("parallel") => Node::Parallel {
             children: children_from(ruby, spec.entry(1)?, leaves)?,
             success: Threshold::Count(spec.entry(2)?),
             failure: Threshold::Count(spec.entry(3)?),
         },
-        "conditional" => {
+        Some("conditional") => {
             let condition = node_from(ruby, spec.entry(1)?, leaves)?;
             let branch = node_from(ruby, spec.entry(2)?, leaves)?;
             let otherwise = match spec.entry::<Option<RArray>>(3)? {
@@ -260,30 +272,31 @@ fn node_from(
                 (true, None) => Node::while_do(condition, branch),
             }
         }
-        "map" => {
+        Some("map") => {
             let child = node_from(ruby, spec.entry(1)?, leaves)?;
-            match name(spec.entry(2)?)?.as_ref() {
-                "inverter" => child.inverter(),
-                "force_success" => child.force_success(),
-                "force_failure" => child.force_failure(),
-                other => return Err(unknown(ruby, "map", other)),
+            let map: Symbol = spec.entry(2)?;
+            match name(map).as_deref() {
+                Some("inverter") => child.inverter(),
+                Some("force_success") => child.force_success(),
+                Some("force_failure") => child.force_failure(),
+                _ => return Err(unknown(ruby, "map", map)),
             }
         }
-        "timeout" => {
+        Some("timeout") => {
             node_from(ruby, spec.entry(2)?, leaves)?.timeout(Duration::from_nanos(spec.entry(1)?))
         }
-        "loop" => {
+        Some("loop") => {
             let child = node_from(ruby, spec.entry(1)?, leaves)?;
             let limit = spec
                 .entry::<Option<usize>>(3)?
                 .map_or(Limit::Unlimited, Limit::Times);
-            if is_success(spec.entry(2)?)? {
+            if is_success(ruby, spec.entry(2)?) {
                 child.repeat(limit)
             } else {
                 child.retry_until_successful(limit)
             }
         }
-        other => return Err(unknown(ruby, "node", other)),
+        _ => return Err(unknown(ruby, "node", kind)),
     };
     Ok(node)
 }
@@ -298,22 +311,25 @@ fn children_from(
         .collect()
 }
 
-fn name(symbol: Symbol) -> Result<Cow<'static, str>, Error> {
-    symbol.name()
+fn name(symbol: Symbol) -> Option<Cow<'static, str>> {
+    symbol.name().ok()
 }
 
-fn is_success(symbol: Symbol) -> Result<bool, Error> {
-    Ok(name(symbol)? == "success")
+fn is(ruby: &Ruby, symbol: Symbol, name: &str) -> bool {
+    symbol == ruby.sym_new(name)
+}
+
+fn is_success(ruby: &Ruby, symbol: Symbol) -> bool {
+    is(ruby, symbol, SUCCESS)
 }
 
 /// Accepts exactly the three status Symbols, like `BehaviorMachines.check_status`.
 fn status_of(ruby: &Ruby, leaf: Value, status: Value) -> Result<Status, Error> {
     if let Some(symbol) = Symbol::from_value(status) {
-        match name(symbol)?.as_ref() {
-            "success" => return Ok(Status::Success),
-            "failure" => return Ok(Status::Failure),
-            "running" => return Ok(Status::Running),
-            _ => {}
+        for (name, known) in STATUSES {
+            if is(ruby, symbol, name) {
+                return Ok(known);
+            }
         }
     }
     // Through Ruby, so an `inspect` that raises propagates as in the Ruby engine.
@@ -328,9 +344,9 @@ fn status_of(ruby: &Ruby, leaf: Value, status: Value) -> Result<Status, Error> {
 
 fn status_symbol(ruby: &Ruby, status: Status) -> Symbol {
     ruby.to_symbol(match status {
-        Status::Success => "success",
-        Status::Failure => "failure",
-        Status::Running => "running",
+        Status::Success => SUCCESS,
+        Status::Failure => FAILURE,
+        Status::Running => RUNNING,
     })
 }
 
@@ -348,10 +364,10 @@ fn reentrant(ruby: &Ruby) -> Error {
     }
 }
 
-fn unknown(ruby: &Ruby, what: &str, name: &str) -> Error {
+fn unknown(ruby: &Ruby, what: &str, spec: Symbol) -> Error {
     Error::new(
         ruby.exception_arg_error(),
-        format!("unknown {what} spec {name}"),
+        format!("unknown {what} spec {}", spec.inspect()),
     )
 }
 
