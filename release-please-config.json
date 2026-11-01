@@ -19,7 +19,8 @@
       "extra-files": [
         "README.md"
       ],
-      "initial-version": "0.1.0"
+      "initial-version": "0.1.0",
+      "bump-minor-pre-major": true
     },
     "ext/behavior_machines_native/circuit": {
       "release-type": "rust",
