@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.3.1...behavior_machines/v0.4.0) (2026-11-01)
+
+
+### Features
+
+* share the family clock and honour an ambient deadline ([7bb7ca3](https://github.com/seuros/behavior_machines/commit/7bb7ca3502315c9e516b9906adab7e1f6bace02e))
+
+
+### Bug Fixes
+
+* a failed gem push fails the release ([0d79c5c](https://github.com/seuros/behavior_machines/commit/0d79c5ce7f85df4b3848187e710cd5f5c20744ea))
+* a lone checkout can bundle ([bd8b6a0](https://github.com/seuros/behavior_machines/commit/bd8b6a09f5716505ea6d6cff6cbed045fc212477))
+* **native:** compare status Symbols by identity ([6555ab1](https://github.com/seuros/behavior_machines/commit/6555ab1972493ea8735080bcf1856f4ff97a22ca))
+* state_machines is a development dependency ([6b64ebd](https://github.com/seuros/behavior_machines/commit/6b64ebdbf87eb80387869a30a2921bd43b93ff4d))
+
 ## [0.3.1](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.3.0...behavior_machines/v0.3.1) (2026-10-29)
 
 
