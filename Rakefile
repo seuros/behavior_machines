@@ -99,35 +99,4 @@ def published_platforms(version)
   JSON.parse(response.body).select { |v| v['number'] == version }.map { |v| v['platform'] }
 end
 
-namespace :gems do
-  desc 'Download every gem attached to the GitHub Release for VERSION (default: current) into pkg/ via gh'
-  task :pull_all, [:version] do |_t, args|
-    version = args[:version] || GEMSPEC.version.to_s
-    tag = "#{GEMSPEC.name}/v#{version}"
-
-    sh 'gh', 'release', 'download', tag, '--repo', GITHUB_REPO, '--pattern', '*.gem', '--dir', 'pkg', '--clobber'
-
-    missing = release_gems(version).keys.reject { |name| File.exist?(File.join('pkg', name)) }
-    abort "Release #{tag} is missing gems: #{missing.join(', ')}" unless missing.empty?
-
-    release_gems(version).each_key { |name| puts "pkg/#{name} (#{File.size(File.join('pkg', name))} bytes)" }
-  end
-
-  desc 'Push gems in pkg/ for VERSION (default: current) to rubygems.org, skipping platforms already published'
-  task :push_all, [:version] do |_t, args|
-    version = args[:version] || GEMSPEC.version.to_s
-    published = published_platforms(version)
-    pending = release_gems(version).reject { |_name, platform| published.include?(platform) }
-
-    if pending.empty?
-      puts "#{GEMSPEC.name} #{version}: all #{release_gems(version).size} platforms already on rubygems.org"
-      next
-    end
-
-    missing = pending.keys.reject { |name| File.exist?(File.join('pkg', name)) }
-    abort "Missing in pkg/ (run rake gems:pull_all[#{version}] first): #{missing.join(', ')}" unless missing.empty?
-
-    (release_gems(version).keys - pending.keys).each { |name| puts "skip #{name}: already on rubygems.org" }
-    pending.each_key { |name| sh 'gem', 'push', File.join('pkg', name) }
-  end
-end
+Dir[File.join(__dir__, 'tasks/*.rake')].sort.each { |f| load f }
