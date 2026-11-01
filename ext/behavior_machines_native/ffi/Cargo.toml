@@ -16,5 +16,5 @@ workspace = true
 
 [dependencies]
 behavior-machines = { path = "../core", version = "0.2.0" }
-magnus = "0.9.2"
+magnus = { version = ">= 0.9.3", default-features = false, features = ["io"] }
 rb-sys = "0.9.130"
