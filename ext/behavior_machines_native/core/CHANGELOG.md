@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/seuros/behavior_machines/compare/behavior-machines-v0.2.0...behavior-machines-v0.3.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* the state-machines feature needs state-machines 0.34; a machine built with 0.32 or 0.33 no longer drives the machine leaves.
+
+### Bug Fixes
+
+* follow state-machines 0.34 with a caret ([369cf39](https://github.com/seuros/behavior_machines/commit/369cf39fa8ed5952c6332f038b93874bfe61b14d))
+
 ## [0.2.0](https://github.com/seuros/behavior_machines/compare/behavior-machines-v0.1.0...behavior-machines-v0.2.0) (2026-10-14)
 
 
