@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.5.0...behavior_machines/v0.6.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **circuit:** trees, statuses and times come from behavior-machines 0.3; a Node built with behavior-machines 0.2 is a different type.
+* the state-machines feature needs state-machines 0.34; a machine built with 0.32 or 0.33 no longer drives the machine leaves.
+
+### Bug Fixes
+
+* **circuit:** lower trees from behavior-machines 0.3 ([5f8d8ee](https://github.com/seuros/behavior_machines/commit/5f8d8eefaa6884250a14ecbaa72d8c26361f724a))
+* follow state-machines 0.34 with a caret ([369cf39](https://github.com/seuros/behavior_machines/commit/369cf39fa8ed5952c6332f038b93874bfe61b14d))
+
 ## [0.5.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.4.0...behavior_machines/v0.5.0) (2026-11-01)
 
 
