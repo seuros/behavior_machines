@@ -5,6 +5,9 @@ circuit. A pure tick becomes a fixed, layered evaluation of affine forms and
 rectified gates instead of a recursive walk. A staged executor also supports
 effectful actions without running unreachable leaves.
 
+Build the tree with the behavior-machines release this crate depends on: a
+`Node` from another release is a different type and does not lower.
+
 ```rust
 use behavior_machines::{Node, Status};
 use behavior_machines_circuit::{Lowered, State};
