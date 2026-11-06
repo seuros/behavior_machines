@@ -1,7 +1,7 @@
 //! Fixtures shared by the sibling `tests.rs` modules.
 //!
-//! The integration test in `tests/` is its own crate and cannot reach these,
-//! so it keeps its own copies.
+//! The integration tests in `tests/` are separate crates and cannot reach
+//! these; they share `tests/support/fixtures.rs` instead.
 
 use behavior_machines::Node;
 

@@ -11,8 +11,14 @@
 //! 3^9 = 19,683 runs, and the circuit evaluates a tree of that size in
 //! microseconds.
 
-use behavior_machines::{Leaf, Node, NodeId, Observer, Status, Time, Tree};
+use behavior_machines::{Leaf, Node, Status, Time, Tree};
 use behavior_machines_circuit::{Lowered, State};
+
+mod support {
+    pub mod fixtures;
+}
+
+use support::fixtures::{Record, each_assignment, leaf, leaf_count};
 
 /// A leaf that returns whatever the script says for this tick.
 struct Scripted(usize);
@@ -33,25 +39,6 @@ impl Leaf<Script> for Scripted {
     }
 }
 
-/// Records what the engine reports, to compare against the schedule.
-#[derive(Default)]
-struct Record {
-    ticked: Vec<(usize, Status)>,
-    halted: Vec<usize>,
-}
-
-impl Observer for Record {
-    fn ticked(&mut self, node: NodeId, status: Status) {
-        self.ticked.push((node.index(), status));
-    }
-
-    fn halted(&mut self, node: NodeId) {
-        self.halted.push(node.index());
-    }
-}
-
-const STATUSES: [Status; 3] = [Status::Success, Status::Failure, Status::Running];
-
 /// Numbers a tree's leaves in the pre-order the engine assigns node ids in,
 /// which is the order the circuit expects leaf statuses in.
 fn scripted(tree: &Node<()>) -> Node<Scripted> {
@@ -61,12 +48,6 @@ fn scripted(tree: &Node<()>) -> Node<Scripted> {
         next += 1;
         Scripted(slot)
     })
-}
-
-fn leaf_count(tree: &Node<()>) -> usize {
-    let mut count = 0;
-    tree.clone().map(|()| count += 1);
-    count
 }
 
 /// Runs one script through both backends and compares every tick.
@@ -124,33 +105,11 @@ fn compare(tree: &Node<()>, leaves: usize, ticks: usize, script: &[Status]) {
     }
 }
 
-/// Every assignment of statuses to `slots` positions, as a flat counter in
-/// base 3.
-fn each_assignment(slots: usize, mut visit: impl FnMut(&[Status])) {
-    let mut assignment = vec![Status::Success; slots];
-    let Ok(slots_exponent) = u32::try_from(slots) else {
-        panic!("few enough slots")
-    };
-    let total = 3usize.pow(slots_exponent);
-    for encoded in 0..total {
-        let mut rest = encoded;
-        for slot in &mut assignment {
-            *slot = STATUSES[rest % 3];
-            rest /= 3;
-        }
-        visit(&assignment);
-    }
-}
-
 fn check_exhaustively(tree: &Node<()>, ticks: usize) {
     let leaves = leaf_count(tree);
     each_assignment(leaves * ticks, |script| {
         compare(tree, leaves, ticks, script);
     });
-}
-
-const fn leaf() -> Node<()> {
-    Node::leaf(())
 }
 
 #[test]

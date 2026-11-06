@@ -3,8 +3,14 @@
 
 use core::time::Duration;
 
-use behavior_machines::{Leaf, Node, NodeId, Observer, Status, Time, Tree};
+use behavior_machines::{Leaf, Node, Status, Time, Tree};
 use behavior_machines_circuit::{Action, Condition, ExecutionLeaf, Executor, LowerError, Schedule};
+
+mod support {
+    pub mod fixtures;
+}
+
+use support::fixtures::{Record, each_assignment, leaf, leaf_count};
 
 #[derive(Clone, Debug)]
 struct Scripted(usize);
@@ -81,23 +87,7 @@ impl Leaf<Context> for Reference {
     }
 }
 
-#[derive(Default)]
-struct Record {
-    ticked: Vec<(usize, Status)>,
-    halted: Vec<usize>,
-}
-
-impl Observer for Record {
-    fn ticked(&mut self, node: NodeId, status: Status) {
-        self.ticked.push((node.index(), status));
-    }
-
-    fn halted(&mut self, node: NodeId) {
-        self.halted.push(node.index());
-    }
-}
-
-fn executor(tree: Node<ExecutionLeaf<Scripted, Scripted>>) -> Executor<Scripted, Scripted> {
+fn executor<C, A>(tree: Node<ExecutionLeaf<C, A>>) -> Executor<C, A> {
     let Ok(executor) = Executor::new(tree) else {
         panic!("the fixture is supported")
     };
@@ -292,28 +282,12 @@ fn compare(tree: &Node<()>, script: &[Status], ticks: usize, action_mask: usize)
 }
 
 fn exhaustive(tree: &Node<()>, ticks: usize) {
-    let mut leaves = 0;
-    tree.clone().map(|()| leaves += 1);
-    let slots = leaves * ticks;
-    let mut script = vec![Status::Success; slots];
-    let statuses = [Status::Success, Status::Failure, Status::Running];
-    let Ok(exponent) = u32::try_from(slots) else {
-        panic!("the fixture is small")
-    };
-    for encoded in 0..3usize.pow(exponent) {
-        let mut remaining = encoded;
-        for status in &mut script {
-            *status = statuses[remaining % 3];
-            remaining /= 3;
-        }
+    let leaves = leaf_count(tree);
+    each_assignment(leaves * ticks, |script| {
         for mask in 0..1 << leaves {
-            compare(tree, &script, ticks, mask);
+            compare(tree, script, ticks, mask);
         }
-    }
-}
-
-const fn leaf() -> Node<()> {
-    Node::leaf(())
+    });
 }
 
 #[test]
@@ -404,16 +378,9 @@ impl Action<Shared> for Change {
     }
 }
 
-fn shared_executor(tree: Node<ExecutionLeaf<Flag, Change>>) -> Executor<Flag, Change> {
-    let Ok(executor) = Executor::new(tree) else {
-        panic!("the fixture is valid")
-    };
-    executor
-}
-
 #[test]
 fn a_later_condition_observes_changes_from_an_earlier_action() {
-    let mut executor = shared_executor(Node::sequence([
+    let mut executor = executor(Node::sequence([
         Node::leaf(ExecutionLeaf::Action(Change::SetFlag)),
         Node::leaf(ExecutionLeaf::Condition(Flag)),
     ]));
@@ -427,7 +394,7 @@ fn a_later_condition_observes_changes_from_an_earlier_action() {
 
 #[test]
 fn abandoned_subtree_halts_before_a_later_sibling_starts() {
-    let mut executor = shared_executor(Node::sequence([
+    let mut executor = executor(Node::sequence([
         Node::reactive_sequence([
             Node::leaf(ExecutionLeaf::Condition(Flag)),
             Node::leaf(ExecutionLeaf::Action(Change::Wait)),
@@ -453,12 +420,10 @@ fn conditions_are_not_speculatively_evaluated() {
             panic!("an unreachable condition must not be evaluated");
         }
     }
-    let Ok(mut executor) = Executor::new(Node::sequence([
+    let mut executor = executor(Node::sequence([
         Node::leaf(ExecutionLeaf::Action(Scripted(0))),
         Node::leaf(ExecutionLeaf::Condition(MustNotRun)),
-    ])) else {
-        panic!("the fixture is valid")
-    };
+    ]));
     let mut ctx = Context::new(1);
     assert!(executor.tick(&mut ctx, Time::ZERO).is_ok());
     ctx.statuses[0] = Status::Failure;
