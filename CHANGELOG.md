@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.6.0...behavior_machines/v0.6.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* keep test modules out of the packaged crate ([ee78272](https://github.com/seuros/behavior_machines/commit/ee782724950de2d9268731e04ca322889e24fbdd))
+* share circuit test fixtures between effectful and parity tests ([3ec6d33](https://github.com/seuros/behavior_machines/commit/3ec6d3301f23cc5f39df71bedd2bc764db2cfa44))
+
 ## [0.6.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.5.0...behavior_machines/v0.6.0) (2026-11-02)
 
 

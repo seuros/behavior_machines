@@ -1,6 +1,6 @@
 [package]
 name = "behavior-machines-circuit"
-version = "0.4.0"
+version = "0.4.1"
 edition.workspace = true
 rust-version.workspace = true
 license = "BSD-3-Clause"
@@ -11,7 +11,7 @@ categories = ["no-std", "algorithms", "game-development"]
 readme = "README.md"
 
 [dependencies]
-behavior-machines = { path = "../core", version = "0.3.0", default-features = false }
+behavior-machines = { path = "../core", version = "0.3.1", default-features = false }
 thiserror = { version = "2.0.21", default-features = false }
 
 [lints]

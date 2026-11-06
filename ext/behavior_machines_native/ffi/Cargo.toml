@@ -1,6 +1,6 @@
 [package]
 name = "behavior_machines_native"
-version = "0.1.3"
+version = "0.1.4"
 edition.workspace = true
 rust-version.workspace = true
 license = "BSD-3-Clause"
@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 workspace = true
 
 [dependencies]
-behavior-machines = { path = "../core", version = "0.3.0" }
+behavior-machines = { path = "../core", version = "0.3.1" }
 magnus = { version = ">= 0.9.3", default-features = false, features = ["io"] }
 # Nothing here calls rb-sys directly: this is the compiled fallback that
 # implements the stable API for a Ruby rb-sys ships no pre-generated bindings

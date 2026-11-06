@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.1](https://github.com/seuros/behavior_machines/compare/behavior-machines-circuit-v0.4.0...behavior-machines-circuit-v0.4.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* share circuit test fixtures between effectful and parity tests ([3ec6d33](https://github.com/seuros/behavior_machines/commit/3ec6d3301f23cc5f39df71bedd2bc764db2cfa44))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * behavior-machines bumped from 0.3.0 to 0.3.1
+
 ## [0.4.0](https://github.com/seuros/behavior_machines/compare/behavior-machines-circuit-v0.3.1...behavior-machines-circuit-v0.4.0) (2026-11-02)
 
 
