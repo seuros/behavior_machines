@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/seuros/behavior_machines/compare/behavior-machines-v0.3.0...behavior-machines-v0.3.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* keep test modules out of the packaged crate ([ee78272](https://github.com/seuros/behavior_machines/commit/ee782724950de2d9268731e04ca322889e24fbdd))
+
 ## [0.3.0](https://github.com/seuros/behavior_machines/compare/behavior-machines-v0.2.0...behavior-machines-v0.3.0) (2026-11-02)
 
 
