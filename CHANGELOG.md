@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.6.1...behavior_machines/v0.7.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* one Refusal, Duration time, sealed Ruby values, matryona 0.5
+
+### Features
+
+* one Refusal, Duration time, sealed Ruby values, matryona 0.5 ([3a77a4d](https://github.com/seuros/behavior_machines/commit/3a77a4da156d17e74622bf85686efded2425ca69))
+
 ## [0.6.1](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.6.0...behavior_machines/v0.6.1) (2026-11-06)
 
 
