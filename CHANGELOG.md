@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.8.0...behavior_machines/v0.8.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* fix wrapped classes at load so building a value runs no Ruby ([10879b6](https://github.com/seuros/behavior_machines/commit/10879b679e665b318d61594b497672aeba9f773d))
+
 ## [0.8.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.7.0...behavior_machines/v0.8.0) (2026-11-16)
 
 
