@@ -17,7 +17,7 @@ license = "BSD-3-Clause"
 repository = "https://github.com/seuros/behavior_machines"
 
 [workspace.dependencies]
-behavior-machines = { path = "ext/behavior_machines_native/core", version = ">=0.3.1" }
+behavior-machines = { path = "ext/behavior_machines_native/core", version = ">=0.4.0" }
 state-machines = { version = ">=0.34", default-features = false }
 matryona-machines = { version = ">=0.5", default-features = false }
 magnus = { version = "0.9.3", default-features = false }
