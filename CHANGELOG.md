@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.7.0...behavior_machines/v0.8.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* Circuit::push and Builder::{relu,is_zero,at_least,or,and, mask,none_earlier} return Result<_, Refusal>; Refusal gains Full.
+
+### Bug Fixes
+
+* circuit resumes memory composites at every cursor the engine produces ([b6ab493](https://github.com/seuros/behavior_machines/commit/b6ab493e4eec32176738f49fc4d6bf109ab7363a))
+
 ## [0.7.0](https://github.com/seuros/behavior_machines/compare/behavior_machines/v0.6.1...behavior_machines/v0.7.0) (2026-11-16)
 
 
