@@ -8,18 +8,17 @@ Gem::Specification.new do |spec|
   spec.authors = ['Abdelkader Boudih']
   spec.email = ['terminale@gmail.com']
 
-  spec.summary = 'Behavior trees with explicit halt semantics, following the behavior-tree pattern'
+  spec.summary = 'Behavior trees with explicit halt semantics, on the behavior-machines Rust core'
   spec.description = <<~DESC
     BehaviorMachines runs behavior trees whose nodes follow the behavior-tree pattern: Sequence,
-    Fallback, their reactive variants, thresholded Parallel,
-    IfThenElse, WhileDoElse, and the usual decorators. Every running leaf the tree abandons is halted
-    exactly once, in the same call, so leaves can own real resources. Pure Ruby, with an optional
-    native backend built on the behavior-machines Rust crate, and leaves for state_machines objects.
+    Fallback, their reactive variants, thresholded Parallel, IfThenElse, WhileDoElse, and the usual
+    decorators. Every running leaf the tree abandons is halted exactly once, in the same call, so
+    leaves can own real resources. Thin Ruby bindings to the allocation-free behavior-machines Rust
+    core, with leaves for state_machines objects.
   DESC
   spec.homepage = 'https://github.com/seuros/behavior_machines'
   spec.license = 'BSD-3-Clause'
   spec.required_ruby_version = '>= 4.0.0'
-  spec.platform = Gem::Platform::RUBY
 
   spec.metadata['homepage_uri'] = spec.homepage
   spec.metadata['source_code_uri'] = spec.homepage
@@ -28,15 +27,12 @@ Gem::Specification.new do |spec|
   spec.metadata['cargo_crate_name'] = 'behavior_machines_native'
   spec.metadata['cargo_manifest_path'] = 'ext/behavior_machines_native/ffi/Cargo.toml'
 
-  lib_files = Dir['lib/**/*'].reject { |path| path =~ /\.(bundle|so|dll)\z/ }
-  spec.files = lib_files + %w[LICENSE README.md]
+  spec.files = Dir.glob(%w[
+    lib/**/*.rb sig/**/*.rbs ext/**/*.{rb,rs,toml,md} Cargo.toml
+    Cargo.lock README.md LICENSE CHANGELOG.md
+  ]).select { |path| File.file?(path) }
+    .reject { |path| path.end_with?('/tests.rs') || path.include?('/tests/') || path.end_with?('/test_support.rs') }
   spec.require_paths = ['lib']
-
-  spec.add_dependency 'deadline_machines', '>= 0.1'
-  spec.add_development_dependency 'state_machines', '>= 0.202'
-
-  spec.add_development_dependency 'minitest', '~> 6.0'
-  spec.add_development_dependency 'rake', '~> 13.0'
-  spec.add_development_dependency 'rake-compiler', '~> 1.3'
-  spec.add_development_dependency 'rb_sys', '~> 0.9'
+  spec.extensions = ['ext/behavior_machines_native/extconf.rb']
+  spec.add_dependency 'rb_sys', '~> 0.9', '>= 0.9.130'
 end

@@ -15,7 +15,7 @@ class CompositeTest < Minitest::Test
       outcomes.each { |name, status| script.set(name, status) }
       tree = tree(BM.public_send(kind, leaf('a'), leaf('b'), leaf('c')))
 
-      assert_equal expected, tree.tick(script, now: 0), outcomes.inspect
+      assert_equal expected, tree.tick(script, 0), outcomes.inspect
       assert_equal(ticked.map { tick(_1) }, script.log)
       script.assert_idle!
     end
@@ -25,11 +25,11 @@ class CompositeTest < Minitest::Test
     script = Script.new
     tree = tree(BM.sequence(leaf('a'), leaf('b')))
 
-    assert_equal :running, tree.tick(script, now: 0)
+    assert_equal :running, tree.tick(script, 0)
     script.set('a', :success)
-    assert_equal :running, tree.tick(script, now: 0)
+    assert_equal :running, tree.tick(script, 0)
     script.set('b', :success)
-    assert_equal :success, tree.tick(script, now: 0)
+    assert_equal :success, tree.tick(script, 0)
     assert_equal [tick('a'), tick('a'), tick('b'), tick('b')], script.log
   end
 
@@ -38,10 +38,10 @@ class CompositeTest < Minitest::Test
     script.set('guard', :success)
     tree = tree(BM.reactive_sequence(leaf('guard'), leaf('work')))
 
-    2.times { assert_equal :running, tree.tick(script, now: 0) }
+    2.times { assert_equal :running, tree.tick(script, 0) }
     assert_equal 2, script.count(tick('guard'))
     script.set('guard', :failure)
-    assert_equal :failure, tree.tick(script, now: 0)
+    assert_equal :failure, tree.tick(script, 0)
     assert_equal 1, script.count(halted('work'))
     script.assert_idle!
   end
@@ -52,9 +52,9 @@ class CompositeTest < Minitest::Test
       script.set('high', :failure)
       tree = tree(BM.reactive_fallback(leaf('high'), leaf('low')))
 
-      assert_equal :running, tree.tick(script, now: 0)
+      assert_equal :running, tree.tick(script, 0)
       script.set('high', preempting)
-      assert_equal preempting, tree.tick(script, now: 0)
+      assert_equal preempting, tree.tick(script, 0)
       assert_equal 1, script.count(halted('low')), preempting
       tree.halt(script)
       script.assert_idle!
@@ -63,11 +63,11 @@ class CompositeTest < Minitest::Test
 
   def test_parallel_all_halts_running_siblings_on_failure
     script = Script.new
-    tree = tree(BM.parallel(leaf('a'), leaf('b'), leaf('c')))
+    tree = tree(parallel_all(leaf('a'), leaf('b'), leaf('c')))
 
-    assert_equal :running, tree.tick(script, now: 0)
+    assert_equal :running, tree.tick(script, 0)
     script.set('b', :failure)
-    assert_equal :failure, tree.tick(script, now: 0)
+    assert_equal :failure, tree.tick(script, 0)
     assert_equal [1, 0, 1], %w[a b c].map { script.count(halted(_1)) }
     script.assert_idle!
   end
@@ -76,10 +76,10 @@ class CompositeTest < Minitest::Test
     script = Script.new
     tree = tree(race(leaf('left'), leaf('right')))
 
-    assert_equal :running, tree.tick(script, now: 0)
+    assert_equal :running, tree.tick(script, 0)
     script.set('left', :failure)
     script.set('right', :success)
-    assert_equal :failure, tree.tick(script, now: 0)
+    assert_equal :failure, tree.tick(script, 0)
     assert_equal 1, script.count(halted('right'))
     script.assert_idle!
   end
@@ -87,26 +87,26 @@ class CompositeTest < Minitest::Test
   def test_parallel_any_succeeds_on_first_success_and_fails_once_all_fail
     script = Script.new
     tree = tree(parallel_any(leaf('a'), leaf('b')))
-    assert_equal :running, tree.tick(script, now: 0)
+    assert_equal :running, tree.tick(script, 0)
     script.set('b', :success)
-    assert_equal :success, tree.tick(script, now: 0)
+    assert_equal :success, tree.tick(script, 0)
     assert_equal 1, script.count(halted('a'))
 
     script = Script.new
     script.set('a', :failure)
-    assert_equal :running, tree.tick(script, now: 0)
+    assert_equal :running, tree.tick(script, 0)
     script.set('b', :failure)
-    assert_equal :failure, tree.tick(script, now: 0)
+    assert_equal :failure, tree.tick(script, 0)
     script.assert_idle!
   end
 
   def test_parallel_fails_as_soon_as_success_is_unreachable
     script = Script.new
-    tree = tree(BM.parallel(leaf('a'), leaf('b'), leaf('c'), success: :all, failure: :all))
+    tree = tree(BM.parallel([leaf('a'), leaf('b'), leaf('c')], :all, :all))
 
-    assert_equal :running, tree.tick(script, now: 0)
+    assert_equal :running, tree.tick(script, 0)
     script.set('b', :failure)
-    assert_equal :failure, tree.tick(script, now: 0)
+    assert_equal :failure, tree.tick(script, 0)
     assert_equal [1, 1], %w[a c].map { script.count(halted(_1)) }
     script.assert_idle!
   end
@@ -115,9 +115,9 @@ class CompositeTest < Minitest::Test
     script = Script.new
     tree = tree(BM.sequence(race(leaf('winner'), leaf('loser')), leaf('next')))
 
-    assert_equal :running, tree.tick(script, now: 0)
+    assert_equal :running, tree.tick(script, 0)
     script.set('winner', :success)
-    assert_equal :running, tree.tick(script, now: 0)
+    assert_equal :running, tree.tick(script, 0)
     assert_operator script.index(halted('loser')), :<, script.index(tick('next'))
   end
 end

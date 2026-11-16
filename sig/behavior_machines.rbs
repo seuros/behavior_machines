@@ -1,0 +1,286 @@
+module BehaviorMachines
+  VERSION: String
+  # The core's `Status`, in order.
+  STATUSES: Array[status]
+  # The core's `Halt`, in order.
+  HALTS: Array[halt]
+  # One Symbol per core `Refusal` variant, no catch-all.
+  REFUSALS: Array[Symbol]
+
+  # Integer nanoseconds on one monotonic clock the caller picks, for instants
+  # (now, a deadline) and spans (a Sleep or Timeout duration) alike. A
+  # non-Integer raises TypeError; a negative value, or one past what the
+  # core's Duration holds, raises RangeError.
+  type nanoseconds = Integer
+  # The core's `Status`.
+  type status = :success | :failure | :running
+  # The core's `Halt`: :already_idle when nothing was running, which changed
+  # nothing.
+  type halt = :halted | :already_idle
+  # The one refusal a tick can answer: `now` is earlier than the latest
+  # honoured tick. Nothing ran and nothing changed.
+  type tick_refusal = :time_regression
+  # A Parallel threshold: :all or an Integer between 1 and the child count.
+  type threshold = :all | Integer
+  # A loop limit: :unlimited or an Integer in 0..2**64-1.
+  type limit = :unlimited | Integer
+
+  # Anything a Leaf node holds: tick(ctx, now) answers a status; halt(ctx)
+  # is optional.
+  interface _Leaf
+    def tick: (untyped ctx, nanoseconds now) -> status
+  end
+
+  # An observer may implement either hook or both.
+  interface _Observer
+  end
+
+  # Every node class.
+  type node = Node::Leaf | Node::AlwaysSuccess | Node::AlwaysFailure | Node::Sleep | Node::Sequence
+            | Node::ReactiveSequence | Node::Fallback | Node::ReactiveFallback | Node::Parallel
+            | Node::IfThenElse | Node::WhileDoElse | Node::Inverter | Node::ForceSuccess | Node::ForceFailure
+            | Node::Timeout | Node::Repeat | Node::RetryUntilSuccessful | Node::KeepRunningUntilFailure
+
+  def self.leaf: (_Leaf leaf) -> Node::Leaf
+  def self.always_success: () -> Node::AlwaysSuccess
+  def self.always_failure: () -> Node::AlwaysFailure
+  def self.sleep: (nanoseconds duration) -> Node::Sleep
+  def self.sequence: (*node children) -> Node::Sequence
+  def self.reactive_sequence: (*node children) -> Node::ReactiveSequence
+  def self.fallback: (*node children) -> Node::Fallback
+  def self.reactive_fallback: (*node children) -> Node::ReactiveFallback
+  def self.parallel: (Array[node] children, threshold success, threshold failure) -> Node::Parallel
+  def self.if_then_else: (node condition, node then_branch, node? otherwise) -> Node::IfThenElse
+  def self.if_then: (node condition, node then_branch) -> Node::IfThenElse
+  def self.while_do_else: (node condition, node body, node? otherwise) -> Node::WhileDoElse
+  def self.while_do: (node condition, node body) -> Node::WhileDoElse
+
+  # Any one node field.
+  type node_field = _Leaf | nanoseconds | Array[node] | threshold | limit | node?
+
+  # Native check behind every node `initialize`: `node` is the instance
+  # being built, `fields` its values in member order. Answers the fields to
+  # store, a composite's children replaced by a frozen copy. TypeError for an
+  # instance of no node class, a field count that does not match it, or
+  # a field of the wrong type; RangeError for a value the core refuses.
+  private def self.native_node: (node node, Array[node_field] fields) -> Array[node_field]
+
+  # The core's `Node`, one Data class per variant. Each validates through the
+  # core when built: TypeError for the wrong type, RangeError for a value the
+  # core refuses. A composite keeps a frozen copy of its children.
+  module Node
+    CLASSES: Array[Class]
+
+    # A sealed node Data class whose `initialize` hands its fields, in member
+    # order, to `BehaviorMachines.native_node` before Data stores them.
+    private def self.define: (*Symbol members) -> singleton(Data)
+
+    module Decorators
+      def inverter: () -> Inverter
+      def force_success: () -> ForceSuccess
+      def force_failure: () -> ForceFailure
+      def timeout: (nanoseconds duration) -> Timeout
+      def repeat: (limit limit) -> Repeat
+      def retry_until_successful: (limit limit) -> RetryUntilSuccessful
+      def keep_running_until_failure: () -> KeepRunningUntilFailure
+    end
+
+    class Leaf < Data
+      include Decorators
+      attr_reader leaf: _Leaf
+      def self.new: (_Leaf leaf) -> Leaf
+                  | (leaf: _Leaf) -> Leaf
+    end
+
+    class AlwaysSuccess < Data
+      include Decorators
+      def self.new: () -> AlwaysSuccess
+    end
+
+    class AlwaysFailure < Data
+      include Decorators
+      def self.new: () -> AlwaysFailure
+    end
+
+    class Sleep < Data
+      include Decorators
+      attr_reader duration: nanoseconds
+      def self.new: (nanoseconds duration) -> Sleep
+                  | (duration: nanoseconds) -> Sleep
+    end
+
+    class Sequence < Data
+      include Decorators
+      attr_reader children: Array[node]
+      def self.new: (Array[node] children) -> Sequence
+                  | (children: Array[node]) -> Sequence
+    end
+
+    class ReactiveSequence < Data
+      include Decorators
+      attr_reader children: Array[node]
+      def self.new: (Array[node] children) -> ReactiveSequence
+                  | (children: Array[node]) -> ReactiveSequence
+    end
+
+    class Fallback < Data
+      include Decorators
+      attr_reader children: Array[node]
+      def self.new: (Array[node] children) -> Fallback
+                  | (children: Array[node]) -> Fallback
+    end
+
+    class ReactiveFallback < Data
+      include Decorators
+      attr_reader children: Array[node]
+      def self.new: (Array[node] children) -> ReactiveFallback
+                  | (children: Array[node]) -> ReactiveFallback
+    end
+
+    class Parallel < Data
+      include Decorators
+      attr_reader children: Array[node]
+      attr_reader success: threshold
+      attr_reader failure: threshold
+      def self.new: (Array[node] children, threshold success, threshold failure) -> Parallel
+                  | (children: Array[node], success: threshold, failure: threshold) -> Parallel
+    end
+
+    class IfThenElse < Data
+      include Decorators
+      attr_reader condition: node
+      attr_reader then_branch: node
+      attr_reader otherwise: node?
+      def self.new: (node condition, node then_branch, node? otherwise) -> IfThenElse
+                  | (condition: node, then_branch: node, otherwise: node?) -> IfThenElse
+    end
+
+    class WhileDoElse < Data
+      include Decorators
+      attr_reader condition: node
+      attr_reader body: node
+      attr_reader otherwise: node?
+      def self.new: (node condition, node body, node? otherwise) -> WhileDoElse
+                  | (condition: node, body: node, otherwise: node?) -> WhileDoElse
+    end
+
+    class Inverter < Data
+      include Decorators
+      attr_reader child: node
+      def self.new: (node child) -> Inverter
+                  | (child: node) -> Inverter
+    end
+
+    class ForceSuccess < Data
+      include Decorators
+      attr_reader child: node
+      def self.new: (node child) -> ForceSuccess
+                  | (child: node) -> ForceSuccess
+    end
+
+    class ForceFailure < Data
+      include Decorators
+      attr_reader child: node
+      def self.new: (node child) -> ForceFailure
+                  | (child: node) -> ForceFailure
+    end
+
+    class Timeout < Data
+      include Decorators
+      attr_reader duration: nanoseconds
+      attr_reader child: node
+      def self.new: (nanoseconds duration, node child) -> Timeout
+                  | (duration: nanoseconds, child: node) -> Timeout
+    end
+
+    class Repeat < Data
+      include Decorators
+      attr_reader limit: limit
+      attr_reader child: node
+      def self.new: (limit limit, node child) -> Repeat
+                  | (limit: limit, child: node) -> Repeat
+    end
+
+    class RetryUntilSuccessful < Data
+      include Decorators
+      attr_reader limit: limit
+      attr_reader child: node
+      def self.new: (limit limit, node child) -> RetryUntilSuccessful
+                  | (limit: limit, child: node) -> RetryUntilSuccessful
+    end
+
+    class KeepRunningUntilFailure < Data
+      include Decorators
+      attr_reader child: node
+      def self.new: (node child) -> KeepRunningUntilFailure
+                  | (child: node) -> KeepRunningUntilFailure
+    end
+  end
+
+  # The core's `Tree`, at the smallest capacity that holds the definition.
+  class Tree
+    # The most nodes a tree may have.
+    CAPACITY: Integer
+
+    # RangeError past CAPACITY nodes, TypeError for anything but a node, and
+    # either for a node forged past its checks.
+    def self.new: (node root) -> Tree
+    # FrozenError on a frozen tree; RuntimeError when a leaf calls back into
+    # the tree ticking it. A leaf's or observer's error propagates after every
+    # active leaf was halted.
+    def tick: (untyped ctx, nanoseconds now) -> (status | tick_refusal)
+    def tick_observed: (untyped ctx, nanoseconds now, _Observer observer) -> (status | tick_refusal)
+    def halt: (untyped ctx) -> halt
+    def halt_observed: (untyped ctx, _Observer observer) -> halt
+    def running?: () -> bool
+    def next_deadline: () -> nanoseconds?
+    def size: () -> Integer
+  end
+
+  # Leaves for state_machines objects. `access` is a Symbol naming a method on
+  # the context, or anything responding to call(ctx); `machine` the state
+  # machine attribute.
+  module Machine
+    type access = Symbol | ^(untyped) -> untyped
+
+    CLASSES: Array[Class]
+
+    def self.reach: (access access, untyped ctx) -> untyped
+    # nil for a Symbol or anything responding to call; TypeError otherwise.
+    def self.check_access: (access access) -> nil
+    # A frozen copy; TypeError unless an Array of Symbols.
+    def self.symbols: (Array[Symbol] states, String name) -> Array[Symbol]
+    # The Symbol itself; TypeError otherwise.
+    def self.symbol: (Symbol value, String name) -> Symbol
+
+    class InState < Data
+      attr_reader access: access
+      attr_reader machine: Symbol
+      attr_reader states: Array[Symbol]
+      def self.new: (access access, Symbol machine, Array[Symbol] states) -> InState
+                  | (access: access, machine: Symbol, states: Array[Symbol]) -> InState
+      def tick: (untyped ctx, nanoseconds now) -> status
+    end
+
+    class Fire < Data
+      attr_reader access: access
+      attr_reader machine: Symbol
+      attr_reader event: Symbol
+      def self.new: (access access, Symbol machine, Symbol event) -> Fire
+                  | (access: access, machine: Symbol, event: Symbol) -> Fire
+      def tick: (untyped ctx, nanoseconds now) -> status
+    end
+
+    class WaitFor < Data
+      attr_reader access: access
+      attr_reader machine: Symbol
+      attr_reader success: Array[Symbol]
+      attr_reader failure: Array[Symbol]
+      attr_reader on_halt: Symbol?
+      def self.new: (access access, Symbol machine, Array[Symbol] success, Array[Symbol] failure, Symbol? on_halt) -> WaitFor
+                  | (access: access, machine: Symbol, success: Array[Symbol], failure: Array[Symbol], on_halt: Symbol?) -> WaitFor
+      def tick: (untyped ctx, nanoseconds now) -> status
+      def halt: (untyped ctx) -> nil
+    end
+  end
+end

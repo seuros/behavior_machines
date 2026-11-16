@@ -11,7 +11,9 @@
 //! 3^9 = 19,683 runs, and the circuit evaluates a tree of that size in
 //! microseconds.
 
-use behavior_machines::{Leaf, Node, Status, Time, Tree};
+use core::time::Duration;
+
+use behavior_machines::{Leaf, Node, Status, Tree};
 use behavior_machines_circuit::{Lowered, State};
 
 mod support {
@@ -30,7 +32,7 @@ struct Script {
 }
 
 impl Leaf<Script> for Scripted {
-    fn tick(&self, script: &mut Script, _now: Time) -> Status {
+    fn tick(&self, script: &mut Script, _now: Duration) -> Status {
         script.status[self.0]
     }
 
@@ -54,7 +56,7 @@ fn scripted(tree: &Node<()>) -> Node<Scripted> {
 ///
 /// `script` holds one status per leaf per tick, laid out tick-major.
 fn compare(tree: &Node<()>, leaves: usize, ticks: usize, script: &[Status]) {
-    let Ok(mut engine) = Tree::new(scripted(tree)) else {
+    let Ok(mut engine) = Tree::<_, 64>::new(scripted(tree)) else {
         panic!("the tree is valid")
     };
     let Ok(lowered) = Lowered::new(tree) else {
@@ -70,7 +72,10 @@ fn compare(tree: &Node<()>, leaves: usize, ticks: usize, script: &[Status]) {
             halted: Vec::new(),
         };
         let mut record = Record::default();
-        let engine_root = engine.tick_observed(&mut context, Time::ZERO, &mut record);
+        let Ok(engine_root) = engine.tick_observed(&mut context, Duration::ZERO, &mut record)
+        else {
+            panic!("the engine ticks at a constant instant")
+        };
 
         let Ok(schedule) = lowered.evaluate(&mut state, statuses) else {
             panic!("the state and statuses came from this tree")

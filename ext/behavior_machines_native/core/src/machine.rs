@@ -8,10 +8,11 @@
 //! [state-machines]: https://docs.rs/state-machines
 
 use core::fmt;
+use core::time::Duration;
 
 use state_machines::DynamicMachine;
 
-use crate::{Leaf, Status, Time};
+use crate::{Leaf, Status};
 
 /// Borrows the machine an adapter drives out of the tree context.
 pub type Access<C, M> = fn(&mut C) -> &mut M;
@@ -35,7 +36,7 @@ impl<C: ?Sized, M: DynamicMachine> InState<C, M> {
 }
 
 impl<C: ?Sized, M: DynamicMachine> Leaf<C> for InState<C, M> {
-    fn tick(&self, ctx: &mut C, _now: Time) -> Status {
+    fn tick(&self, ctx: &mut C, _now: Duration) -> Status {
         if (self.accepts)((self.machine)(ctx).state()) {
             Status::Success
         } else {
@@ -62,7 +63,7 @@ impl<C: ?Sized, M: DynamicMachine> Fire<C, M> {
 }
 
 impl<C: ?Sized, M: DynamicMachine> Leaf<C> for Fire<C, M> {
-    fn tick(&self, ctx: &mut C, _now: Time) -> Status {
+    fn tick(&self, ctx: &mut C, _now: Duration) -> Status {
         match (self.machine)(ctx).handle((self.event)()) {
             Ok(()) => Status::Success,
             Err(_) => Status::Failure,
@@ -102,7 +103,7 @@ impl<C: ?Sized, M: DynamicMachine> WaitFor<C, M> {
 }
 
 impl<C: ?Sized, M: DynamicMachine> Leaf<C> for WaitFor<C, M> {
-    fn tick(&self, ctx: &mut C, _now: Time) -> Status {
+    fn tick(&self, ctx: &mut C, _now: Duration) -> Status {
         (self.classify)((self.machine)(ctx).state())
     }
 

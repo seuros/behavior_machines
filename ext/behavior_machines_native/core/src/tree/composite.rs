@@ -1,27 +1,29 @@
 //! Composites over a list of children.
 
-use super::slot::{Run, Slot};
+use core::time::Duration;
+
+use super::slot::{self, Children, Run, Slot, children, halt_all};
 use crate::observe::Observer;
-use crate::{Leaf, Status, Time};
+use crate::{Leaf, Status};
 
 /// Sequence and fallback with memory. The cursor survives only while a child
 /// runs, so a finished composite restarts from its first child.
 pub(super) fn ordered<L, C, O>(
-    children: &mut [Slot<L>],
+    children: Children<'_>,
     cursor: &mut usize,
     advance_on: Status,
-    run: &mut Run<'_, C, O>,
-    now: Time,
+    run: &mut Run<'_, L, C, O>,
+    now: Duration,
 ) -> Status
 where
     L: Leaf<C>,
     C: ?Sized,
     O: Observer + ?Sized,
 {
-    while let Some(child) = children.get_mut(*cursor) {
-        match child.tick(run, now) {
+    for (index, (child, at)) in children.enumerate().skip(*cursor) {
+        match slot::tick(child, at, run, now) {
             Status::Running => return Status::Running,
-            status if status == advance_on => *cursor += 1,
+            status if status == advance_on => *cursor = index + 1,
             decisive => {
                 *cursor = 0;
                 return decisive;
@@ -36,68 +38,70 @@ where
 /// that stops the walk keeps running or decides the result, and every later
 /// child that was still running is halted.
 pub(super) fn reactive<L, C, O>(
-    children: &mut [Slot<L>],
+    mut children: Children<'_>,
     advance_on: Status,
-    run: &mut Run<'_, C, O>,
-    now: Time,
+    run: &mut Run<'_, L, C, O>,
+    now: Duration,
 ) -> Status
 where
     L: Leaf<C>,
     C: ?Sized,
     O: Observer + ?Sized,
 {
-    let mut rest = children;
-    while let Some((child, later)) = rest.split_first_mut() {
-        let status = child.tick(run, now);
+    while let Some((child, at)) = children.next() {
+        let status = slot::tick(child, at, run, now);
         if status != advance_on {
-            halt_all(later, run);
+            halt_all(children, run);
             return status;
         }
-        rest = later;
     }
     advance_on
 }
 
 /// Decides once `success` children succeeded, or once `failure` failed or
-/// success became unreachable. Finished children are not ticked again within
-/// an activation, and children decide in order, so the leftmost wins ties.
+/// success became unreachable. Finished children keep their result in their
+/// own `outcome` and are not ticked again within an activation; children
+/// decide in order, so the leftmost wins ties.
 pub(super) fn parallel<L, C, O>(
-    children: &mut [Slot<L>],
-    outcomes: &mut [Option<Status>],
+    below: &mut [Slot],
+    at: usize,
     success: usize,
     failure: usize,
-    run: &mut Run<'_, C, O>,
-    now: Time,
+    run: &mut Run<'_, L, C, O>,
+    now: Duration,
 ) -> Status
 where
     L: Leaf<C>,
     C: ?Sized,
     O: Observer + ?Sized,
 {
-    let total = children.len();
-    let count = |outcomes: &[Option<Status>], status| {
-        outcomes
-            .iter()
-            .filter(|outcome| **outcome == Some(status))
-            .count()
-    };
-    let (mut succeeded, mut failed) = (
-        count(outcomes, Status::Success),
-        count(outcomes, Status::Failure),
-    );
+    let (mut total, mut succeeded, mut failed) = (0, 0, 0);
+    for (child, _) in children(below, at) {
+        total += 1;
+        match child.first().and_then(|head| head.outcome) {
+            Some(Status::Success) => succeeded += 1,
+            Some(Status::Failure) => failed += 1,
+            Some(Status::Running) | None => {}
+        }
+    }
 
     let mut decided = None;
-    for (child, outcome) in children.iter_mut().zip(outcomes.iter_mut()) {
-        if outcome.is_some() {
+    for (child, child_at) in children(below, at) {
+        if child.first().is_some_and(|head| head.outcome.is_some()) {
             continue;
         }
-        let status = child.tick(run, now);
+        let status = slot::tick(child, child_at, run, now);
         match status {
             Status::Running => continue,
             Status::Success => succeeded += 1,
             Status::Failure => failed += 1,
         }
-        *outcome = Some(status);
+        if let Some(head) = child.first_mut() {
+            head.outcome = Some(status);
+        }
+        // Each child is counted once, either as already finished above or
+        // as it finishes here, so `failed <= total` and the subtraction
+        // below cannot wrap.
         if succeeded >= success {
             decided = Some(Status::Success);
         } else if failed >= failure || total - failed < success {
@@ -111,21 +115,22 @@ where
     let Some(status) = decided else {
         return Status::Running;
     };
-    halt_all(children, run);
-    outcomes.fill(None);
+    reset(below, at, run);
     status
 }
 
-/// Halts every running child. Finished and never-started children are not
-/// running, so they are skipped.
-pub(super) fn halt_all<L, C, O>(children: &mut [Slot<L>], run: &mut Run<'_, C, O>)
+/// Halts every running child and forgets every finished child's result.
+pub(super) fn reset<L, C, O>(below: &mut [Slot], at: usize, run: &mut Run<'_, L, C, O>)
 where
     L: Leaf<C>,
     C: ?Sized,
     O: Observer + ?Sized,
 {
-    for child in children {
-        child.halt(run);
+    for (child, child_at) in children(below, at) {
+        slot::halt(child, child_at, run);
+        if let Some(head) = child.first_mut() {
+            head.outcome = None;
+        }
     }
 }
 

@@ -25,15 +25,15 @@ class MachineTest < Minitest::Test
 
   def run_job
     BM.sequence(
-      BM.leaf(BM::Machine::Fire.new(:job, :start)),
-      BM.leaf(BM::Machine::WaitFor.new(:job, success: :completed, failure: %i[failed cancelled], on_halt: :cancel))
+      BM.leaf(BM::Machine::Fire.new(:job, :state, :start)),
+      BM.leaf(BM::Machine::WaitFor.new(:job, :state, [:completed], %i[failed cancelled], :cancel))
     )
   end
 
   def world(passed: -> { false }) = World.new(job: Job.new, deadline: passed)
 
   def test_in_state_reports_whether_the_state_is_accepted
-    leaf = BM::Machine::InState.new(->(world) { world.job }, :started)
+    leaf = BM::Machine::InState.new(->(world) { world.job }, :state, [:started])
     world = world()
     assert_equal :failure, leaf.tick(world, 0)
     world.job.start
@@ -42,7 +42,7 @@ class MachineTest < Minitest::Test
 
   def test_fire_succeeds_only_when_the_machine_accepts_the_event
     world = world()
-    fire = BM::Machine::Fire.new(:job, :start)
+    fire = BM::Machine::Fire.new(:job, :state, :start)
     assert_equal :success, fire.tick(world, 0)
     assert_equal :started, world.job.state_name
     assert_equal :failure, fire.tick(world, 0)
@@ -52,10 +52,10 @@ class MachineTest < Minitest::Test
     world = world()
     tree = tree(run_job)
 
-    assert_equal :running, tree.tick(world, now: 0)
+    assert_equal :running, tree.tick(world, 0)
     assert_equal :started, world.job.state_name
     world.job.complete
-    assert_equal :success, tree.tick(world, now: 0)
+    assert_equal :success, tree.tick(world, 0)
   end
 
   def test_abandoned_wait_cancels_the_job_once
@@ -63,11 +63,11 @@ class MachineTest < Minitest::Test
     world = world(passed: -> { passed })
     tree = tree(race(run_job, BM.leaf(Deadline.new)))
 
-    assert_equal :running, tree.tick(world, now: 0)
+    assert_equal :running, tree.tick(world, 0)
     passed = true
-    assert_equal :success, tree.tick(world, now: 0)
+    assert_equal :success, tree.tick(world, 0)
     assert_equal :cancelled, world.job.state_name
-    tree.halt(world)
+    assert_equal :already_idle, tree.halt(world)
     assert_equal :cancelled, world.job.state_name
   end
 
@@ -75,14 +75,26 @@ class MachineTest < Minitest::Test
     world = world()
     tree = tree(run_job)
 
-    assert_equal :running, tree.tick(world, now: 0)
+    assert_equal :running, tree.tick(world, 0)
     world.job.complete
-    tree.halt(world)
+    assert_equal :halted, tree.halt(world)
     assert_equal :completed, world.job.state_name
   end
 
   def test_constructors_validate_their_arguments
     assert_raises(ArgumentError) { BM::Machine::InState.new(:job) }
-    assert_raises(ArgumentError) { BM::Machine::Fire.new(42, :start) }
+    assert_raises(TypeError) { BM::Machine::Fire.new(42, :state, :start) }
+    assert_raises(TypeError) { BM::Machine::InState.new(:job, :state, :started) }
+    assert_raises(RangeError) { BM::Machine::InState.new(:job, :state, []) }
+    assert_raises(TypeError) { BM::Machine::WaitFor.new(:job, :state, [:done], [], 'cancel') }
+    assert_predicate BM::Machine::WaitFor.new(:job, :state, [:done], [], nil), :frozen?
+  end
+
+  def test_leaf_classes_are_sealed
+    assert_equal [BM::Machine::InState, BM::Machine::Fire, BM::Machine::WaitFor], BM::Machine::CLASSES
+    BM::Machine::CLASSES.each do |leaf|
+      refute_respond_to leaf, :allocate
+      assert_raises(TypeError) { Class.new(leaf) }
+    end
   end
 end

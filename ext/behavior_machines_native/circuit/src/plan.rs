@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use behavior_machines::Status;
 
-use crate::builder::{Bit, Builder};
+use crate::builder::Bit;
 use crate::status::StatusBits;
 use crate::wire::Wire;
 
@@ -107,43 +107,87 @@ impl Plan {
         cells
     }
 
-    /// The cell holding node `index`'s `running` flag.
+    /// The cell holding node `index`'s `running` flag, or `None` if this
+    /// plan has no such node.
     #[must_use]
-    pub const fn running_cell(&self, index: usize) -> u32 {
-        #[expect(clippy::cast_possible_truncation, reason = "bounded by tree size")]
-        let cell = index as u32;
-        cell
+    pub fn running_cell(&self, index: usize) -> Option<u32> {
+        // The running flags open the layout, so a node's cell is its index.
+        (index < self.nodes)
+            .then_some(index)
+            .and_then(|offset| u32::try_from(offset).ok())
     }
 
-    /// The cell holding cursor `cell`.
+    /// The cell holding cursor `cell`, or `None` if this plan has no such
+    /// cursor.
     #[must_use]
-    pub const fn cursor_cell(&self, cell: usize) -> u32 {
-        #[expect(clippy::cast_possible_truncation, reason = "bounded by tree size")]
-        let offset = (self.nodes + cell) as u32;
-        offset
+    pub fn cursor_cell(&self, cell: usize) -> Option<u32> {
+        (cell < self.cursors.len())
+            .then(|| self.cursor_offset(cell))
+            .and_then(|offset| u32::try_from(offset).ok())
     }
 
     /// The first of the three cells holding leaf `slot`'s status, in
-    /// success, failure, running order.
+    /// success, failure, running order, or `None` if this plan has no such
+    /// leaf.
     #[must_use]
-    pub const fn leaf_cell(&self, slot: usize) -> u32 {
-        #[expect(clippy::cast_possible_truncation, reason = "bounded by tree size")]
-        let offset = (self.nodes + self.cursors.len() + slot * 3) as u32;
-        offset
+    pub fn leaf_cell(&self, slot: usize) -> Option<u32> {
+        self.leaf_status_cell(slot, Status::Success)
     }
 
-    /// The cell holding leaf `slot`'s `status` bit.
+    /// The cell holding leaf `slot`'s `status` bit, or `None` if this plan
+    /// has no such leaf.
     #[must_use]
-    pub const fn leaf_status_cell(&self, slot: usize, status: Status) -> u32 {
-        self.leaf_cell(slot) + status_offset(status)
+    pub fn leaf_status_cell(&self, slot: usize, status: Status) -> Option<u32> {
+        (slot < self.leaves.len())
+            .then(|| self.leaf_offset(slot, status))
+            .and_then(|offset| u32::try_from(offset).ok())
     }
 
-    pub(crate) fn running_wire(&self, index: usize, builder: &Builder) -> Wire {
-        builder.input(self.running_cell(index))
+    // The offsets below take an index already known to belong to this plan
+    // (checked above, or produced by the lowering that built it). The result
+    // is then below the cell count, a sum of `Vec` lengths that fits in
+    // memory, so the arithmetic cannot overflow.
+
+    const fn cursor_offset(&self, cell: usize) -> usize {
+        self.nodes + cell
     }
 
-    pub(crate) fn cursor_wire(&self, cell: usize, builder: &Builder) -> Wire {
-        builder.input(self.cursor_cell(cell))
+    const fn leaf_offset(&self, slot: usize, status: Status) -> usize {
+        self.nodes + self.cursors.len() + slot * 3 + status_offset(status)
+    }
+
+    /// The input cells for one tick, in layout order: the state's `running`
+    /// flags and cursors, then a one-hot triple per leaf status. The caller
+    /// has checked every length against this plan.
+    pub(crate) fn cells(
+        &self,
+        running: &[bool],
+        cursor: &[u32],
+        leaf_status: &[Status],
+    ) -> Vec<f32> {
+        let mut cells = Vec::with_capacity(self.cell_count() as usize);
+        cells.extend(running.iter().map(|running| f32::from(u8::from(*running))));
+        cells.extend(
+            cursor
+                .iter()
+                .map(|cursor| f32::from(u16::try_from(*cursor).unwrap_or(u16::MAX))),
+        );
+        for status in leaf_status {
+            cells.extend(
+                [Status::Success, Status::Failure, Status::Running]
+                    .map(|bit| f32::from(u8::from(bit == *status))),
+            );
+        }
+        cells
+    }
+
+    /// The running flags open the layout, so a node's cell is its index.
+    pub(crate) const fn running_wire(index: usize) -> Wire {
+        Wire::cell(wire_cell(index))
+    }
+
+    pub(crate) const fn cursor_wire(&self, cell: usize) -> Wire {
+        Wire::cell(wire_cell(self.cursor_offset(cell)))
     }
 
     /// Leaf `slot`'s status, read from its three cells.
@@ -151,8 +195,8 @@ impl Plan {
     /// The host promises the three hold a one-hot triple; a leaf always
     /// returns exactly one of the three statuses, so that is what writing the
     /// result down produces.
-    pub(crate) fn leaf_status(&self, slot: usize, builder: &Builder) -> StatusBits {
-        let bit = |status| Bit::assume(builder.input(self.leaf_status_cell(slot, status)));
+    pub(crate) fn leaf_status(&self, slot: usize) -> StatusBits {
+        let bit = |status| Bit::assume(Wire::cell(wire_cell(self.leaf_offset(slot, status))));
         StatusBits {
             success: bit(Status::Success),
             failure: bit(Status::Failure),
@@ -161,8 +205,16 @@ impl Plan {
     }
 }
 
+/// A cell offset of a lowered tree as a wire cell. The lowering only builds
+/// trees whose cell count fits a `u32` (see [`Plan::cell_count`]).
+const fn wire_cell(offset: usize) -> u32 {
+    #[expect(clippy::cast_possible_truncation, reason = "bounded by tree size")]
+    let cell = offset as u32;
+    cell
+}
+
 /// The offset of a status within a leaf's three cells.
-const fn status_offset(status: Status) -> u32 {
+const fn status_offset(status: Status) -> usize {
     match status {
         Status::Success => 0,
         Status::Failure => 1,

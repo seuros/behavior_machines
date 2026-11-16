@@ -22,6 +22,8 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::Refusal;
+
 /// A position in a circuit's value table.
 ///
 /// Wires are opaque on purpose: a plain number does not type-check where a
@@ -31,6 +33,12 @@ use alloc::vec::Vec;
 pub struct Wire(u32);
 
 impl Wire {
+    /// Input cell `index`, for a plan that laid the cells out itself and
+    /// sized the circuit to hold them.
+    pub(crate) const fn cell(index: u32) -> Self {
+        Self(index)
+    }
+
     /// The wire's position in the value table.
     #[must_use]
     pub const fn position(self) -> usize {
@@ -141,23 +149,25 @@ impl Affine {
             .unwrap_or(0)
     }
 
-    /// The form's value against an evaluated value table.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the table is shorter than a wire this form reads, which means
-    /// the table came from a different circuit.
+    /// The form's value against an evaluated value table, or `None` if the
+    /// table is shorter than a wire this form reads, which means it came
+    /// from a different circuit.
     #[must_use]
-    pub fn value(&self, values: &[f32]) -> f32 {
+    pub fn value(&self, values: &[f32]) -> Option<f32> {
         self.terms
             .iter()
-            .fold(self.bias, |total, (wire, coefficient)| {
-                total + coefficient * values[wire.position()]
+            .try_fold(self.bias, |total, (wire, coefficient)| {
+                Some(total + coefficient * values.get(wire.position())?)
             })
     }
 
+    /// The value during an evaluation, whose table always holds every wire
+    /// an operation reads: operations read only earlier positions.
     fn evaluate(&self, values: &[f32]) -> f32 {
-        self.value(values)
+        self.value(values).unwrap_or_else(|| {
+            debug_assert!(false, "an operation reads only earlier values");
+            0.0
+        })
     }
 }
 
@@ -227,25 +237,22 @@ impl Circuit {
         &self.ops
     }
 
-    /// The wire of input cell `index`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index` is not an input cell of this circuit, which is a bug
-    /// in the caller rather than a runtime condition.
+    /// The wire of input cell `index`, or `None` past the circuit's input
+    /// width.
     #[must_use]
-    pub fn input(&self, index: u32) -> Wire {
-        assert!(
-            index < self.inputs,
-            "input {index} is outside the circuit's {} cells",
-            self.inputs
-        );
-        Wire(index)
+    pub const fn input(&self, index: u32) -> Option<Wire> {
+        if index < self.inputs {
+            Some(Wire(index))
+        } else {
+            None
+        }
     }
 
     /// How many values a full evaluation produces.
     #[must_use]
     pub const fn value_count(&self) -> usize {
+        // Cannot overflow: a circuit never holds more than `u32::MAX` values
+        // (see `push`), which fits `usize` on every supported target.
         self.inputs as usize + self.ops.len()
     }
 
@@ -266,9 +273,15 @@ impl Circuit {
     /// last layer is the circuit's [`depth`](Self::depth).
     #[must_use]
     pub fn layers(&self) -> Vec<u32> {
-        let mut depths = vec![0; self.value_count()];
-        for (index, op) in self.ops.iter().enumerate() {
-            depths[self.inputs as usize + index] = op.depth(&depths) + 1;
+        // Inputs sit in layer zero; each operation reads only earlier values,
+        // so appending in order fills the table without indexing into it. A
+        // depth is at most the operation count, itself bounded by the `u32`
+        // wire space, so the increment never saturates.
+        let mut depths = vec![0; self.inputs as usize];
+        depths.reserve(self.ops.len());
+        for op in &self.ops {
+            let depth = op.depth(&depths).saturating_add(1);
+            depths.push(depth);
         }
         depths
     }
@@ -284,11 +297,11 @@ impl Circuit {
     ///
     /// # Errors
     ///
-    /// Returns [`EvalError::InputCount`] if `inputs` is not exactly the
-    /// circuit's input width.
-    pub fn evaluate(&self, inputs: &[f32]) -> Result<Vec<f32>, EvalError> {
+    /// [`Refusal::InputCount`] if `inputs` is not exactly the circuit's input
+    /// width.
+    pub fn evaluate(&self, inputs: &[f32]) -> Result<Vec<f32>, Refusal> {
         if inputs.len() != self.inputs as usize {
-            return Err(EvalError::InputCount {
+            return Err(Refusal::InputCount {
                 expected: self.inputs as usize,
                 given: inputs.len(),
             });
@@ -307,20 +320,6 @@ impl Circuit {
         }
         Ok(values)
     }
-}
-
-/// Why an evaluation could not run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum EvalError {
-    /// The input slice did not match the circuit's input width.
-    #[error("circuit takes {expected} input cells, got {given}")]
-    InputCount {
-        /// The circuit's input width.
-        expected: usize,
-        /// How many were given.
-        given: usize,
-    },
 }
 
 #[cfg(test)]

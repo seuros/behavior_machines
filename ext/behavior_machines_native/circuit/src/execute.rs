@@ -13,10 +13,11 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::time::Duration;
 
-use behavior_machines::{Node, Status, Time};
+use behavior_machines::{Halt, Status, Step};
 
-use crate::{LowerError, Lowered, Schedule, State, TickError};
+use crate::{Lowered, Refusal, Schedule, State};
 
 /// A pure check over host state.
 ///
@@ -26,7 +27,7 @@ use crate::{LowerError, Lowered, Schedule, State, TickError};
 /// acquired observation is unavailable.
 pub trait Condition<C: ?Sized> {
     /// Returns this check's current status at host-supplied time `now`.
-    fn evaluate(&self, ctx: &C, now: Time) -> Status;
+    fn evaluate(&self, ctx: &C, now: Duration) -> Status;
 }
 
 /// An effectful operation with an explicit activation lifecycle.
@@ -37,10 +38,10 @@ pub trait Condition<C: ?Sized> {
 /// The executor creates no tasks, timers, or threads.
 pub trait Action<C: ?Sized> {
     /// Starts an inactive operation. A terminal result finishes it immediately.
-    fn start(&self, ctx: &mut C, now: Time) -> Status;
+    fn start(&self, ctx: &mut C, now: Duration) -> Status;
 
     /// Advances an operation whose last result was `Running`.
-    fn poll(&self, ctx: &mut C, now: Time) -> Status;
+    fn poll(&self, ctx: &mut C, now: Duration) -> Status;
 
     /// Cancels an abandoned running activation, exactly once.
     ///
@@ -68,7 +69,7 @@ pub enum ExecutionLeaf<C, A> {
 ///
 /// Call [`Self::halt`] before discarding a running executor. Dropping it cannot
 /// cancel host-owned work because the context is not owned by this type.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Executor<C, A> {
     lowered: Lowered,
     leaves: Vec<ExecutionLeaf<C, A>>,
@@ -76,20 +77,27 @@ pub struct Executor<C, A> {
     /// Kept separately from provisional circuit state so effects are tracked
     /// immediately, including if evaluation subsequently fails.
     active: Vec<bool>,
+    /// The latest honoured tick's instant.
+    last: Option<Duration>,
 }
 
 impl<C, A> Executor<C, A> {
-    /// Compiles a classified definition without evaluating any leaves.
+    /// Compiles a classified definition, given as steps in pre-order (a
+    /// `Node` is such a sequence), without evaluating any leaves.
     ///
     /// # Errors
     ///
-    /// Returns [`LowerError`] for an unsupported node or empty composite.
-    pub fn new(root: Node<ExecutionLeaf<C, A>>) -> Result<Self, LowerError> {
-        let lowered = Lowered::new(&root)?;
-        let mut leaves = Vec::with_capacity(lowered.plan().leaf_count());
-        // Node::map uses the same leaf order as the lowering, without making
-        // this executor duplicate the node vocabulary or tree walk.
-        root.map(|leaf| leaves.push(leaf));
+    /// As [`Lowered::new`].
+    pub fn new(
+        steps: impl IntoIterator<Item = Step<ExecutionLeaf<C, A>>>,
+    ) -> Result<Self, Refusal> {
+        let mut leaves = Vec::new();
+        // Leaves come off in step order, which is the lowering's leaf order.
+        let shape: Vec<Step<()>> = steps
+            .into_iter()
+            .map(|step| step.map(|leaf| leaves.push(leaf)))
+            .collect();
+        let lowered = Lowered::new(shape)?;
         let state = State::initial(&lowered);
         let active = vec![false; leaves.len()];
         Ok(Self {
@@ -97,6 +105,7 @@ impl<C, A> Executor<C, A> {
             leaves,
             state,
             active,
+            last: None,
         })
     }
 
@@ -120,89 +129,142 @@ impl<C, A> Executor<C, A> {
     ///
     /// # Errors
     ///
-    /// Returns [`TickError`] if internal circuit evaluation fails. Every active
-    /// action is halted and execution state is reset before returning an error.
-    /// Like the regular engine, this does not catch panics from host code.
-    pub fn tick<H: ?Sized>(&mut self, ctx: &mut H, now: Time) -> Result<Schedule, TickError>
+    /// [`Refusal::TimeRegression`] when `now` is earlier than the latest
+    /// honoured tick: nothing runs and nothing changes. Any other refusal
+    /// means internal circuit evaluation failed, a bug in this crate; every
+    /// active action is then halted and execution state is reset before
+    /// returning it. Like the regular engine, this does not catch panics from
+    /// host code.
+    pub fn tick<H: ?Sized>(&mut self, ctx: &mut H, now: Duration) -> Result<Schedule, Refusal>
     where
         C: Condition<H>,
         A: Action<H>,
     {
+        if self.last.is_some_and(|last| now < last) {
+            return Err(Refusal::TimeRegression);
+        }
+        self.last = Some(now);
         let result = self.advance(ctx, now);
         if result.is_err() {
-            self.halt(ctx);
+            self.reset(ctx);
         }
         result
     }
 
     /// Halts every active action in engine order and resets the circuit.
     ///
-    /// Repeated calls do nothing until another action starts. Conditions have
-    /// no halt effects. No clock or task cancellation API is assumed.
-    pub fn halt<H: ?Sized>(&mut self, ctx: &mut H)
+    /// An executor with nothing running and no active action answers
+    /// [`Halt::AlreadyIdle`] and nothing changes, so repeated calls do
+    /// nothing until another action starts. Conditions have no halt effects.
+    /// No clock or task cancellation API is assumed.
+    pub fn halt<H: ?Sized>(&mut self, ctx: &mut H) -> Halt
     where
         A: Action<H>,
     {
-        for position in 0..self.lowered.plan().report_order().len() {
-            let node = self.lowered.plan().report_order()[position];
-            if let Some(slot) = self.lowered.plan().leaf_slot(node) {
-                self.halt_leaf(slot, ctx);
+        if !self.is_running() && !self.active.contains(&true) {
+            return Halt::AlreadyIdle;
+        }
+        self.reset(ctx);
+        Halt::Halted
+    }
+
+    /// Halts every active action in engine order and resets the circuit.
+    fn reset<H: ?Sized>(&mut self, ctx: &mut H)
+    where
+        A: Action<H>,
+    {
+        let plan = self.lowered.plan();
+        for node in plan.report_order() {
+            if let Some(slot) = plan.leaf_slot(*node) {
+                halt_leaf(&mut self.active, &self.leaves, slot, ctx);
             }
         }
         self.state = State::initial(&self.lowered);
     }
 
-    fn advance<H: ?Sized>(&mut self, ctx: &mut H, now: Time) -> Result<Schedule, TickError>
+    fn advance<H: ?Sized>(&mut self, ctx: &mut H, now: Duration) -> Result<Schedule, Refusal>
     where
         C: Condition<H>,
         A: Action<H>,
     {
-        let mut statuses = vec![Status::Running; self.leaves.len()];
-        let mut resolved = vec![false; self.leaves.len()];
+        let Self {
+            lowered,
+            leaves,
+            state,
+            active,
+            ..
+        } = self;
+        let plan = lowered.plan();
+        let mut statuses = vec![Status::Running; leaves.len()];
+        let mut resolved = vec![false; leaves.len()];
         let mut position = 0;
         loop {
             // Never advance memory cursors from a speculative schedule.
-            let mut next = self.state.clone();
-            let schedule = self.lowered.evaluate(&mut next, &statuses)?;
-            while position < self.lowered.plan().report_order().len() {
-                let node = self.lowered.plan().report_order()[position];
-                if let Some(slot) = self.lowered.plan().leaf_slot(node) {
-                    if schedule.halted[node] {
-                        self.halt_leaf(slot, ctx);
+            let mut next = state.clone();
+            let schedule = lowered.evaluate(&mut next, &statuses)?;
+            let mut paused = false;
+            while let Some(node) = plan.report_order().get(position).copied() {
+                if let Some(slot) = plan.leaf_slot(node) {
+                    if schedule.was_halted(node) {
+                        halt_leaf(active, leaves, slot, ctx);
                     }
-                    if schedule.reached(node) && !resolved[slot] {
-                        statuses[slot] = match &self.leaves[slot] {
+                    if schedule.reached(node) && !resolved.get(slot).copied().unwrap_or(true) {
+                        // `evaluate` just accepted `statuses` as one per leaf,
+                        // and `leaves`, `resolved` and `active` share that
+                        // length, so a leaf slot is in all four.
+                        let (Some(status), Some(done), Some(leaf), Some(is_active)) = (
+                            statuses.get_mut(slot),
+                            resolved.get_mut(slot),
+                            leaves.get(slot),
+                            active.get_mut(slot),
+                        ) else {
+                            debug_assert!(false, "every leaf slot has a status, flag and leaf");
+                            return Err(Refusal::LeafCount {
+                                expected: plan.leaf_count(),
+                                given: leaves.len(),
+                            });
+                        };
+                        *status = match leaf {
                             ExecutionLeaf::Condition(condition) => condition.evaluate(ctx, now),
-                            ExecutionLeaf::Action(action) if self.active[slot] => {
-                                action.poll(ctx, now)
-                            }
+                            ExecutionLeaf::Action(action) if *is_active => action.poll(ctx, now),
                             ExecutionLeaf::Action(action) => action.start(ctx, now),
                         };
-                        self.active[slot] = statuses[slot] == Status::Running;
-                        resolved[slot] = true;
+                        *is_active = *status == Status::Running;
+                        *done = true;
                         // Reevaluate before passing this leaf's position:
                         // its actual status can unlock later children/halts.
+                        paused = true;
                         break;
                     }
                 }
+                // `position` indexes `report_order`, so it stays below its
+                // length and the increment cannot overflow.
                 position += 1;
             }
-            if position == self.lowered.plan().report_order().len() {
-                self.state = next;
+            if !paused {
+                *state = next;
                 return Ok(schedule);
             }
         }
     }
+}
 
-    fn halt_leaf<H: ?Sized>(&mut self, slot: usize, ctx: &mut H)
-    where
-        A: Action<H>,
+/// Halts the action in leaf `slot` if it is active, and marks it inactive.
+/// A slot outside the executor names no action, so there is nothing to halt.
+fn halt_leaf<C, A, H: ?Sized>(
+    active: &mut [bool],
+    leaves: &[ExecutionLeaf<C, A>],
+    slot: usize,
+    ctx: &mut H,
+) where
+    A: Action<H>,
+{
+    if active
+        .get_mut(slot)
+        .is_some_and(|flag| core::mem::replace(flag, false))
+        && let Some(ExecutionLeaf::Action(action)) = leaves.get(slot)
     {
-        if core::mem::replace(&mut self.active[slot], false)
-            && let ExecutionLeaf::Action(action) = &self.leaves[slot]
-        {
-            action.halt(ctx);
-        }
+        action.halt(ctx);
     }
 }
 

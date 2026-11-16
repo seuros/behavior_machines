@@ -2,7 +2,7 @@ use super::*;
 
 fn wires() -> (Wire, Wire) {
     let circuit = Circuit::new(2);
-    (circuit.input(0), circuit.input(1))
+    (circuit.input(0).unwrap(), circuit.input(1).unwrap())
 }
 
 #[test]
@@ -30,7 +30,10 @@ fn equal_sums_written_differently_compare_equal() {
 fn scaling_and_offsetting_follow_the_arithmetic() {
     let (a, _) = wires();
     let form = Affine::new(2.0, [(a, 3.0)]).scaled(-2.0).offset(1.0);
-    assert_eq!(form.value(&[5.0, 0.0]), 1.0 + -2.0 * (2.0 + 3.0 * 5.0));
+    assert_eq!(
+        form.value(&[5.0, 0.0]).unwrap(),
+        1.0 + -2.0 * (2.0 + 3.0 * 5.0)
+    );
 }
 
 #[test]
@@ -52,7 +55,7 @@ fn reglu_rectifies_its_gate() {
     ];
     for (left, gate, expected) in CASES {
         let mut circuit = Circuit::new(2);
-        let (a, b) = (circuit.input(0), circuit.input(1));
+        let (a, b) = (circuit.input(0).unwrap(), circuit.input(1).unwrap());
         let out = circuit.push(Op::Reglu {
             left: Affine::wire(a),
             gate: Affine::wire(b),
@@ -69,7 +72,7 @@ fn reglu_rectifies_its_gate() {
 #[test]
 fn layers_place_an_operation_past_everything_it_reads() {
     let mut circuit = Circuit::new(1);
-    let a = circuit.input(0);
+    let a = circuit.input(0).unwrap();
     let first = circuit.push(Op::Affine(Affine::wire(a)));
     // Independent of `first`, so it shares its layer.
     let sibling = circuit.push(Op::Affine(Affine::wire(a)));
@@ -98,7 +101,7 @@ fn evaluating_with_the_wrong_input_count_is_an_error() {
     let circuit = Circuit::new(2);
     assert_eq!(
         circuit.evaluate(&[1.0]),
-        Err(EvalError::InputCount {
+        Err(Refusal::InputCount {
             expected: 2,
             given: 1
         }),

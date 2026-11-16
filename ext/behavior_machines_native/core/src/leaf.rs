@@ -1,6 +1,6 @@
-use alloc::boxed::Box;
+use core::time::Duration;
 
-use crate::{Status, Time};
+use crate::Status;
 
 /// A task the tree runs: a condition check or an action.
 ///
@@ -17,8 +17,9 @@ use crate::{Status, Time};
 /// Leaves are shared, immutable definitions. Keep per-activation state, such
 /// as a spawned task handle, in the context `C`.
 pub trait Leaf<C: ?Sized> {
-    /// Advances the leaf. `now` is the host's reading of the tree clock.
-    fn tick(&self, ctx: &mut C, now: Time) -> Status;
+    /// Advances the leaf. `now` is the host's monotonic reading, since an
+    /// epoch the host picks.
+    fn tick(&self, ctx: &mut C, now: Duration) -> Status;
 
     /// Stops an active leaf that the tree is abandoning: cancel work, release
     /// resources, and clear activation state. The default does nothing, which
@@ -26,8 +27,19 @@ pub trait Leaf<C: ?Sized> {
     fn halt(&self, _ctx: &mut C) {}
 }
 
-impl<C: ?Sized, L: Leaf<C> + ?Sized> Leaf<C> for Box<L> {
-    fn tick(&self, ctx: &mut C, now: Time) -> Status {
+impl<C: ?Sized, L: Leaf<C> + ?Sized> Leaf<C> for &L {
+    fn tick(&self, ctx: &mut C, now: Duration) -> Status {
+        (**self).tick(ctx, now)
+    }
+
+    fn halt(&self, ctx: &mut C) {
+        (**self).halt(ctx);
+    }
+}
+
+#[cfg(any(feature = "alloc", test))]
+impl<C: ?Sized, L: Leaf<C> + ?Sized> Leaf<C> for alloc::boxed::Box<L> {
+    fn tick(&self, ctx: &mut C, now: Duration) -> Status {
         (**self).tick(ctx, now)
     }
 

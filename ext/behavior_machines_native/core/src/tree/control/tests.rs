@@ -2,13 +2,12 @@ use core::time::Duration;
 
 use crate::Node;
 use crate::Status::{Failure, Running, Success};
-use crate::Tree;
 use crate::test_support::Event::{Halt, Tick};
-use crate::test_support::{Script, Scripted, at, leaf, tree};
+use crate::test_support::{Drive, Script, Scripted, TestTree, at, leaf, tree};
 
-const NOW: crate::Time = at(0);
+const NOW: Duration = at(0);
 
-fn if_tree() -> Tree<Scripted> {
+fn if_tree() -> TestTree<Scripted> {
     tree(Node::if_then_else(
         leaf("cond"),
         leaf("then"),
@@ -27,11 +26,7 @@ fn if_runs_the_branch_its_condition_chose_in_the_same_tick() {
         script.set(chosen, Success);
         let mut tree = if_tree();
 
-        assert_eq!(
-            tree.tick(&mut script, NOW),
-            Success,
-            "cond -> {condition:?}"
-        );
+        assert_eq!(tree.run(&mut script, NOW), Success, "cond -> {condition:?}");
         assert_eq!(script.log, [Tick("cond"), Tick(chosen)]);
         assert_eq!(script.count(Tick(skipped)), 0);
     }
@@ -42,16 +37,16 @@ fn if_waits_for_its_condition_and_then_stops_checking_it() {
     let mut script = Script::default();
     let mut tree = if_tree();
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     script.set("cond", Success);
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     script.set("cond", Failure);
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
 
     assert_eq!(script.count(Tick("cond")), 2);
     assert_eq!(script.count(Tick("then")), 2);
     assert_eq!(script.count(Tick("otherwise")), 0);
-    tree.halt(&mut script);
+    tree.stop(&mut script);
     script.assert_idle();
 }
 
@@ -60,18 +55,18 @@ fn if_halts_whichever_part_is_running_and_restarts_at_the_condition() {
     let mut script = Script::default();
     let mut tree = if_tree();
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
-    tree.halt(&mut script);
+    assert_eq!(tree.run(&mut script, NOW), Running);
+    tree.stop(&mut script);
     assert_eq!(script.count(Halt("cond")), 1);
 
     script.set("cond", Success);
-    assert_eq!(tree.tick(&mut script, NOW), Running);
-    tree.halt(&mut script);
+    assert_eq!(tree.run(&mut script, NOW), Running);
+    tree.stop(&mut script);
     assert_eq!(script.count(Halt("then")), 1);
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     assert_eq!(script.count(Tick("cond")), 3);
-    tree.halt(&mut script);
+    tree.stop(&mut script);
     script.assert_idle();
 }
 
@@ -81,18 +76,18 @@ fn if_then_without_otherwise_fails_with_its_condition() {
     script.set("cond", Failure);
     let mut tree = tree(Node::if_then(leaf("cond"), leaf("then")));
 
-    assert_eq!(tree.tick(&mut script, NOW), Failure);
+    assert_eq!(tree.run(&mut script, NOW), Failure);
     assert_eq!(script.log, [Tick("cond")]);
 
     // The next activation evaluates the condition again.
     script.set("cond", Success);
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     assert_eq!(script.count(Tick("then")), 1);
-    tree.halt(&mut script);
+    tree.stop(&mut script);
     script.assert_idle();
 }
 
-fn while_tree() -> Tree<Scripted> {
+fn while_tree() -> TestTree<Scripted> {
     tree(Node::while_do_else(
         leaf("cond"),
         leaf("body"),
@@ -106,15 +101,15 @@ fn while_do_else_rechecks_its_condition_every_tick() {
     script.set("cond", Success);
     let mut tree = while_tree();
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     assert_eq!(
         script.log,
         [Tick("cond"), Tick("body"), Tick("cond"), Tick("body")]
     );
 
     script.set("body", Success);
-    assert_eq!(tree.tick(&mut script, NOW), Success);
+    assert_eq!(tree.run(&mut script, NOW), Success);
     script.assert_idle();
 }
 
@@ -128,14 +123,14 @@ fn while_do_else_halts_the_running_branch_before_switching() {
         script.set("cond", if flip == Failure { Success } else { Failure });
         let mut tree = while_tree();
 
-        assert_eq!(tree.tick(&mut script, NOW), Running);
+        assert_eq!(tree.run(&mut script, NOW), Running);
         script.set("cond", flip);
-        assert_eq!(tree.tick(&mut script, NOW), Running);
+        assert_eq!(tree.run(&mut script, NOW), Running);
 
         let halted = script.position(Halt(from)).unwrap();
         let started = script.position(Tick(to)).unwrap();
         assert!(halted < started, "{from} -> {to}: {:?}", script.log);
-        tree.halt(&mut script);
+        tree.stop(&mut script);
         script.assert_idle();
     }
 }
@@ -147,11 +142,11 @@ fn while_do_else_pauses_its_branches_while_the_condition_runs() {
     let body = leaf("body").timeout(Duration::from_millis(100));
     let mut tree = tree(Node::while_do_else(leaf("cond"), body, leaf("otherwise")));
 
-    assert_eq!(tree.tick(&mut script, at(0)), Running);
+    assert_eq!(tree.run(&mut script, at(0)), Running);
     assert_eq!(tree.next_deadline(), Some(at(100)));
 
     script.set("cond", Running);
-    assert_eq!(tree.tick(&mut script, at(10)), Running);
+    assert_eq!(tree.run(&mut script, at(10)), Running);
     assert_eq!(script.count(Halt("body")), 0);
     assert_eq!(script.count(Tick("body")), 1);
     // A paused branch's timer cannot act, so it is not a wake-up deadline.
@@ -159,10 +154,10 @@ fn while_do_else_pauses_its_branches_while_the_condition_runs() {
 
     // The same activation resumes, deadline intact.
     script.set("cond", Success);
-    assert_eq!(tree.tick(&mut script, at(20)), Running);
+    assert_eq!(tree.run(&mut script, at(20)), Running);
     assert_eq!(script.count(Tick("body")), 2);
     assert_eq!(tree.next_deadline(), Some(at(100)));
-    tree.halt(&mut script);
+    tree.stop(&mut script);
     script.assert_idle();
 }
 
@@ -172,9 +167,9 @@ fn while_do_without_otherwise_fails_when_its_condition_fails() {
     script.set("cond", Success);
     let mut tree = tree(Node::while_do(leaf("cond"), leaf("body")));
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     script.set("cond", Failure);
-    assert_eq!(tree.tick(&mut script, NOW), Failure);
+    assert_eq!(tree.run(&mut script, NOW), Failure);
 
     assert_eq!(script.count(Halt("body")), 1);
     script.assert_idle();

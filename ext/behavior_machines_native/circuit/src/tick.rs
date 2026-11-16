@@ -30,7 +30,7 @@ use behavior_machines::Status;
 
 use crate::lower::Lowered;
 use crate::plan::Plan;
-use crate::wire::EvalError;
+use crate::refusal::Refusal;
 
 /// The tree state the circuit carries between ticks.
 ///
@@ -77,15 +77,31 @@ impl State {
 /// What one tick decided.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Schedule {
-    /// Per node, in pre-order: the status it returned, or `None` if the tick
-    /// did not reach it.
-    pub status: Vec<Option<Status>>,
-    /// Per node: it was running and this tick halted it, so an effectful leaf
-    /// here needs its `halt` called.
-    pub halted: Vec<bool>,
+    status: Vec<Option<Status>>,
+    halted: Vec<bool>,
 }
 
 impl Schedule {
+    /// Per node, in pre-order: the status it returned, or `None` if the tick
+    /// did not reach it.
+    #[must_use]
+    pub fn status(&self) -> &[Option<Status>] {
+        &self.status
+    }
+
+    /// Per node: it was running and this tick halted it, so an effectful leaf
+    /// here needs its `halt` called.
+    #[must_use]
+    pub fn halted(&self) -> &[bool] {
+        &self.halted
+    }
+
+    /// Whether the tick halted node `index`.
+    #[must_use]
+    pub fn was_halted(&self, index: usize) -> bool {
+        self.halted.get(index).copied().unwrap_or(false)
+    }
+
     /// The root's status, which is the tree's result for the tick.
     ///
     /// The root is always reached, so this is never `None` for a schedule the
@@ -109,9 +125,13 @@ impl Schedule {
     /// so reversing it puts `c1`'s subtree first while the engine ticks `c0`
     /// first.
     pub fn ticked<'a>(&'a self, plan: &'a Plan) -> impl Iterator<Item = (usize, Status)> + 'a {
-        plan.report_order()
-            .iter()
-            .filter_map(|index| self.status[*index].map(|status| (*index, status)))
+        plan.report_order().iter().filter_map(|index| {
+            self.status
+                .get(*index)
+                .copied()
+                .flatten()
+                .map(|status| (*index, status))
+        })
     }
 
     /// The nodes the tick halted, in the engine's report order.
@@ -119,37 +139,8 @@ impl Schedule {
         plan.report_order()
             .iter()
             .copied()
-            .filter(|index| self.halted[*index])
+            .filter(|index| self.was_halted(*index))
     }
-}
-
-/// Why a tick could not be evaluated.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum TickError {
-    /// The leaf statuses did not match the tree's leaf count.
-    #[error("tree has {expected} leaves, got {given} statuses")]
-    LeafCount {
-        /// How many leaves the tree has.
-        expected: usize,
-        /// How many statuses were given.
-        given: usize,
-    },
-    /// The state did not come from this lowered tree.
-    #[error("state has {given} node flags, tree has {expected} nodes")]
-    StateShape {
-        /// How many nodes the tree has.
-        expected: usize,
-        /// How many the state holds.
-        given: usize,
-    },
-    /// The state's cursors did not come from this lowered tree.
-    #[error("state has {given} cursors, tree has {expected}")]
-    CursorShape { expected: usize, given: usize },
-    /// The circuit rejected the assembled input vector, which is a bug in this
-    /// crate rather than in the caller.
-    #[error("circuit rejected its own input vector: {0}")]
-    Circuit(#[from] EvalError),
 }
 
 impl Lowered {
@@ -161,55 +152,45 @@ impl Lowered {
     ///
     /// # Errors
     ///
-    /// Returns [`TickError::LeafCount`], [`TickError::StateShape`], or
-    /// [`TickError::CursorShape`] if the arguments do not match this tree.
-    pub fn evaluate(
-        &self,
-        state: &mut State,
-        leaf_status: &[Status],
-    ) -> Result<Schedule, TickError> {
+    /// [`Refusal::LeafCount`], [`Refusal::StateShape`], or
+    /// [`Refusal::CursorShape`] if the arguments do not match this tree;
+    /// `state` is left as it was.
+    pub fn evaluate(&self, state: &mut State, leaf_status: &[Status]) -> Result<Schedule, Refusal> {
         let plan = self.plan();
         if leaf_status.len() != plan.leaf_count() {
-            return Err(TickError::LeafCount {
+            return Err(Refusal::LeafCount {
                 expected: plan.leaf_count(),
                 given: leaf_status.len(),
             });
         }
         if state.running.len() != plan.node_count() {
-            return Err(TickError::StateShape {
+            return Err(Refusal::StateShape {
                 expected: plan.node_count(),
                 given: state.running.len(),
             });
         }
         if state.cursor.len() != plan.cursor_count() {
-            return Err(TickError::CursorShape {
+            return Err(Refusal::CursorShape {
                 expected: plan.cursor_count(),
                 given: state.cursor.len(),
             });
         }
 
-        let mut cells = vec![0.0; plan.cell_count() as usize];
-        for (index, running) in state.running.iter().enumerate() {
-            cells[plan.running_cell(index) as usize] = f32::from(u8::from(*running));
-        }
-        for (cell, cursor) in state.cursor.iter().enumerate() {
-            cells[plan.cursor_cell(cell) as usize] =
-                f32::from(u16::try_from(*cursor).unwrap_or(u16::MAX));
-        }
-        for (slot, status) in leaf_status.iter().enumerate() {
-            cells[plan.leaf_status_cell(slot, *status) as usize] = 1.0;
-        }
-
+        let cells = plan.cells(&state.running, &state.cursor, leaf_status);
         let values = self.circuit().evaluate(&cells)?;
         debug_assert_eq!(self.validate(&values), Ok(()), "lowering invariant broken");
         let outputs = self.outputs();
 
-        let set = |bit: &crate::builder::Bit| bit.form().value(&values) != 0.0;
+        let set = |bit: &crate::builder::Bit| bit.form().value(&values).is_some_and(|v| v != 0.0);
 
-        let status = (0..plan.node_count())
-            .map(|index| {
-                set(&outputs.reached[index]).then(|| {
-                    let bits = &outputs.status[index];
+        // Every output vector was built from this plan: one entry per node,
+        // or per cursor, the same lengths `state` was just checked against.
+        let status = outputs
+            .reached
+            .iter()
+            .zip(&outputs.status)
+            .map(|(reached, bits)| {
+                set(reached).then(|| {
                     if set(&bits.success) {
                         Status::Success
                     } else if set(&bits.failure) {
@@ -220,22 +201,20 @@ impl Lowered {
                 })
             })
             .collect();
-        let halted = (0..plan.node_count())
-            .map(|index| set(&outputs.halted[index]))
-            .collect();
+        let halted = outputs.halted.iter().map(set).collect();
 
-        for index in 0..plan.node_count() {
-            state.running[index] = set(&outputs.next_running[index]);
+        for (running, next) in state.running.iter_mut().zip(&outputs.next_running) {
+            *running = set(next);
         }
-        for cell in 0..plan.cursor_count() {
-            let next = outputs.next_cursor[cell].value(&values);
+        for (cursor, next) in state.cursor.iter_mut().zip(&outputs.next_cursor) {
+            let next = next.value(&values).unwrap_or(0.0);
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "a cursor is a small integer"
             )]
             #[expect(clippy::cast_sign_loss, reason = "a cursor is never negative")]
             let next = next as u32;
-            state.cursor[cell] = next;
+            *cursor = next;
         }
 
         Ok(Schedule { status, halted })

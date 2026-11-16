@@ -10,8 +10,8 @@ class ObserverTest < Minitest::Test
     tree = tree(race(BM.sequence(leaf('a'), leaf('b')), leaf('c')))
     recorder = Recorder.new
 
-    assert_equal :running, tree.tick(script, now: 0, observer: recorder)
-    tree.halt(script, observer: recorder)
+    assert_equal :running, tree.tick_observed(script, 0, recorder)
+    tree.halt_observed(script, recorder)
 
     expected = [
       [:ticked, 2, :success], [:ticked, 3, :running], [:ticked, 1, :running],
@@ -26,10 +26,10 @@ class ObserverTest < Minitest::Test
     %w[cond then keep].each { script.set(_1, :success) }
     # ids: 0 sequence, 1 if, 2 cond, 3 then, 4 otherwise, 5 while, 6 keep, 7 body
     tree = tree(BM.sequence(BM.if_then_else(leaf('cond'), leaf('then'), leaf('otherwise')),
-                            BM.while_do_else(leaf('keep'), leaf('body'))))
+                            BM.while_do(leaf('keep'), leaf('body'))))
     recorder = Recorder.new
 
-    assert_equal :running, tree.tick(script, now: 0, observer: recorder)
+    assert_equal :running, tree.tick_observed(script, 0, recorder)
     expected = [[2, :success], [3, :success], [1, :success], [6, :success], [7, :running], [5, :running], [0, :running]]
     assert_equal(expected.map { [:ticked, *_1] }, recorder.reports)
     tree.halt(script)
@@ -42,8 +42,8 @@ class ObserverTest < Minitest::Test
     tree = tree(leaf('a'))
     observer = Object.new.tap { |o| o.define_singleton_method(:ticked) { |id, status| ticks << [id, status] } }
 
-    assert_equal :running, tree.tick(script, now: 0, observer:)
-    tree.halt(script, observer:)
+    assert_equal :running, tree.tick_observed(script, 0, observer)
+    tree.halt_observed(script, observer)
     assert_equal [[0, :running]], ticks
   end
 end

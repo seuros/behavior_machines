@@ -4,9 +4,9 @@ use crate::Node;
 use crate::Status::{self, Failure, Running, Success};
 use crate::Threshold;
 use crate::test_support::Event::{Halt, Tick};
-use crate::test_support::{Script, Scripted, at, leaf, parallel_any, tree};
+use crate::test_support::{Drive, Script, Scripted, at, leaf, parallel_any, tree};
 
-const NOW: crate::Time = at(0);
+const NOW: Duration = at(0);
 
 #[test]
 fn reactive_sequence_rechecks_its_guard_every_tick_and_halts_on_failure() {
@@ -14,12 +14,12 @@ fn reactive_sequence_rechecks_its_guard_every_tick_and_halts_on_failure() {
     script.set("guard", Success);
     let mut tree = tree(Node::reactive_sequence([leaf("guard"), leaf("work")]));
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     assert_eq!(script.count(Tick("guard")), 2);
 
     script.set("guard", Failure);
-    assert_eq!(tree.tick(&mut script, NOW), Failure);
+    assert_eq!(tree.run(&mut script, NOW), Failure);
     assert_eq!(script.count(Halt("work")), 1);
     script.assert_idle();
 }
@@ -30,15 +30,15 @@ fn reactive_sequence_halts_work_while_its_guard_runs_again() {
     script.set("guard", Success);
     let mut tree = tree(Node::reactive_sequence([leaf("guard"), leaf("work")]));
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     script.set("guard", Running);
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     assert_eq!(script.count(Halt("work")), 1);
 
     script.set("guard", Success);
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     assert_eq!(script.count(Tick("work")), 2);
-    tree.halt(&mut script);
+    tree.stop(&mut script);
     script.assert_idle();
 }
 
@@ -49,12 +49,12 @@ fn reactive_fallback_lets_a_higher_priority_child_preempt() {
         script.set("high", Failure);
         let mut tree = tree(Node::reactive_fallback([leaf("high"), leaf("low")]));
 
-        assert_eq!(tree.tick(&mut script, NOW), Running);
+        assert_eq!(tree.run(&mut script, NOW), Running);
         script.set("high", preempting);
-        assert_eq!(tree.tick(&mut script, NOW), preempting);
+        assert_eq!(tree.run(&mut script, NOW), preempting);
 
         assert_eq!(script.count(Halt("low")), 1, "high -> {preempting:?}");
-        tree.halt(&mut script);
+        tree.stop(&mut script);
         script.assert_idle();
     }
 }
@@ -72,7 +72,7 @@ fn reactive_composites_finish_within_one_tick() {
         script.set("b", advance);
         let mut tree = tree(build(vec![leaf("a"), leaf("b")]));
 
-        assert_eq!(tree.tick(&mut script, NOW), advance);
+        assert_eq!(tree.run(&mut script, NOW), advance);
         assert_eq!(script.log, [Tick("a"), Tick("b")]);
     }
 }
@@ -82,9 +82,9 @@ fn any_success_parallel_succeeds_on_the_first_success_and_halts_the_rest() {
     let mut script = Script::default();
     let mut tree = tree(parallel_any([leaf("a"), leaf("b"), leaf("c")]));
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     script.set("b", Success);
-    assert_eq!(tree.tick(&mut script, NOW), Success);
+    assert_eq!(tree.run(&mut script, NOW), Success);
 
     assert_eq!(script.count(Halt("a")), 1);
     assert_eq!(script.count(Halt("b")), 0);
@@ -98,9 +98,9 @@ fn any_success_parallel_fails_once_every_child_failed() {
     script.set("a", Failure);
     let mut tree = tree(parallel_any([leaf("a"), leaf("b")]));
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     script.set("b", Failure);
-    assert_eq!(tree.tick(&mut script, NOW), Failure);
+    assert_eq!(tree.run(&mut script, NOW), Failure);
 
     assert_eq!(script.count(Tick("a")), 1);
     script.assert_idle();
@@ -118,12 +118,12 @@ fn parallel_decides_on_custom_thresholds() {
         let mut script = Script::default();
         let mut tree = tree(Node::parallel([leaf("a"), leaf("b"), leaf("c")], two, two));
 
-        assert_eq!(tree.tick(&mut script, NOW), Running);
+        assert_eq!(tree.run(&mut script, NOW), Running);
         script.set(finishing[0], status);
-        assert_eq!(tree.tick(&mut script, NOW), Running);
+        assert_eq!(tree.run(&mut script, NOW), Running);
         script.set(finishing[1], status);
         assert_eq!(
-            tree.tick(&mut script, NOW),
+            tree.run(&mut script, NOW),
             expected,
             "{finishing:?} -> {status:?}"
         );
@@ -144,9 +144,9 @@ fn parallel_fails_as_soon_as_success_is_unreachable() {
         Threshold::All,
     ));
 
-    assert_eq!(tree.tick(&mut script, NOW), Running);
+    assert_eq!(tree.run(&mut script, NOW), Running);
     script.set("b", Failure);
-    assert_eq!(tree.tick(&mut script, NOW), Failure);
+    assert_eq!(tree.run(&mut script, NOW), Failure);
 
     assert_eq!(script.count(Halt("a")), 1);
     assert_eq!(script.count(Halt("c")), 1);
@@ -168,19 +168,19 @@ fn reactive_preemption_resets_a_nested_timeout_and_sequence() {
             Node::sequence([leaf("prefix"), leaf("work")]).timeout(Duration::from_millis(10));
         let mut tree = tree(build(vec![leaf("guard"), guarded]));
 
-        assert_eq!(tree.tick(&mut script, at(0)), Running);
+        assert_eq!(tree.run(&mut script, at(0)), Running);
         assert_eq!(tree.next_deadline(), Some(at(10)));
         script.set("guard", Running);
-        assert_eq!(tree.tick(&mut script, at(1)), Running);
+        assert_eq!(tree.run(&mut script, at(1)), Running);
         assert_eq!(script.count(Halt("work")), 1);
         assert_eq!(tree.next_deadline(), None);
 
         // Restarted: a fresh deadline and a sequence that begins again.
         script.set("guard", advance);
-        assert_eq!(tree.tick(&mut script, at(20)), Running);
+        assert_eq!(tree.run(&mut script, at(20)), Running);
         assert_eq!(tree.next_deadline(), Some(at(30)));
         assert_eq!(script.count(Tick("prefix")), 2);
-        tree.halt(&mut script);
+        tree.stop(&mut script);
         script.assert_idle();
     }
 }

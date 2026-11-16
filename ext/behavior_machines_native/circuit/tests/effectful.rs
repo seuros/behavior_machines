@@ -3,8 +3,10 @@
 
 use core::time::Duration;
 
-use behavior_machines::{Leaf, Node, Status, Time, Tree};
-use behavior_machines_circuit::{Action, Condition, ExecutionLeaf, Executor, LowerError, Schedule};
+use behavior_machines::{Halt, Leaf, Node, Status, Tree};
+use behavior_machines_circuit::{
+    Action, Condition, ExecutionLeaf, Executor, Refusal, Schedule, Unsupported,
+};
 
 mod support {
     pub mod fixtures;
@@ -17,8 +19,8 @@ struct Scripted(usize);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Effect {
-    Start(usize, Time),
-    Poll(usize, Time),
+    Start(usize, Duration),
+    Poll(usize, Duration),
     Halt(usize),
 }
 
@@ -40,20 +42,20 @@ impl Context {
 }
 
 impl Condition<Context> for Scripted {
-    fn evaluate(&self, ctx: &Context, _now: Time) -> Status {
+    fn evaluate(&self, ctx: &Context, _now: Duration) -> Status {
         ctx.statuses[self.0]
     }
 }
 
 impl Action<Context> for Scripted {
-    fn start(&self, ctx: &mut Context, now: Time) -> Status {
+    fn start(&self, ctx: &mut Context, now: Duration) -> Status {
         assert!(!ctx.active[self.0], "an active action must be polled");
         ctx.effects.push(Effect::Start(self.0, now));
         ctx.active[self.0] = ctx.statuses[self.0] == Status::Running;
         ctx.statuses[self.0]
     }
 
-    fn poll(&self, ctx: &mut Context, now: Time) -> Status {
+    fn poll(&self, ctx: &mut Context, now: Duration) -> Status {
         assert!(ctx.active[self.0], "an inactive action must be started");
         ctx.effects.push(Effect::Poll(self.0, now));
         ctx.active[self.0] = ctx.statuses[self.0] == Status::Running;
@@ -72,7 +74,7 @@ impl Action<Context> for Scripted {
 struct Reference(ExecutionLeaf<Scripted, Scripted>);
 
 impl Leaf<Context> for Reference {
-    fn tick(&self, ctx: &mut Context, now: Time) -> Status {
+    fn tick(&self, ctx: &mut Context, now: Duration) -> Status {
         match &self.0 {
             ExecutionLeaf::Condition(condition) => condition.evaluate(ctx, now),
             ExecutionLeaf::Action(action) if ctx.active[action.0] => action.poll(ctx, now),
@@ -94,7 +96,7 @@ fn executor<C, A>(tree: Node<ExecutionLeaf<C, A>>) -> Executor<C, A> {
     executor
 }
 
-fn tick(executor: &mut Executor<Scripted, Scripted>, ctx: &mut Context, now: Time) -> Schedule {
+fn tick(executor: &mut Executor<Scripted, Scripted>, ctx: &mut Context, now: Duration) -> Schedule {
     let Ok(schedule) = executor.tick(ctx, now) else {
         panic!("the executor's internal shapes match")
     };
@@ -114,7 +116,7 @@ fn sequence_advances_in_the_same_tick_without_replaying_completed_actions() {
     let mut executor = executor(Node::sequence([action(0), action(1), action(2)]));
     let mut ctx = Context::new(3);
     ctx.statuses = vec![Status::Success, Status::Running, Status::Success];
-    let first = Time::from_nanos(17);
+    let first = Duration::from_nanos(17);
     assert_eq!(
         tick(&mut executor, &mut ctx, first).root(),
         Some(Status::Running)
@@ -125,7 +127,7 @@ fn sequence_advances_in_the_same_tick_without_replaying_completed_actions() {
     );
 
     ctx.statuses[1] = Status::Success;
-    let second = Time::from_nanos(29);
+    let second = Duration::from_nanos(29);
     assert_eq!(
         tick(&mut executor, &mut ctx, second).root(),
         Some(Status::Success)
@@ -141,7 +143,7 @@ fn sequence_advances_in_the_same_tick_without_replaying_completed_actions() {
     );
     assert!(!executor.is_running());
 
-    executor.halt(&mut ctx);
+    assert_eq!(executor.halt(&mut ctx), Halt::AlreadyIdle);
     assert!(
         !ctx.effects
             .iter()
@@ -165,18 +167,22 @@ fn provisional_running_does_not_preempt_an_action_before_its_guard_is_known() {
     let mut executor = executor(Node::reactive_sequence([condition(0), action(1)]));
     let mut ctx = Context::new(2);
     ctx.statuses[0] = Status::Success;
-    tick(&mut executor, &mut ctx, Time::ZERO);
-    tick(&mut executor, &mut ctx, Time::ZERO);
+    tick(&mut executor, &mut ctx, Duration::ZERO);
+    tick(&mut executor, &mut ctx, Duration::ZERO);
     assert_eq!(
         ctx.effects,
-        [Effect::Start(1, Time::ZERO), Effect::Poll(1, Time::ZERO)],
+        [
+            Effect::Start(1, Duration::ZERO),
+            Effect::Poll(1, Duration::ZERO)
+        ],
         "an unresolved guard is not a reason to cancel a running action",
     );
 
+    // The guard fails: the tick itself preempts the action, so there is
+    // nothing left to halt.
     ctx.statuses[0] = Status::Failure;
-    tick(&mut executor, &mut ctx, Time::ZERO);
-    executor.halt(&mut ctx);
-    executor.halt(&mut ctx);
+    tick(&mut executor, &mut ctx, Duration::ZERO);
+    assert_eq!(executor.halt(&mut ctx), Halt::AlreadyIdle);
     assert_eq!(ctx.effects.last(), Some(&Effect::Halt(1)));
     assert_eq!(ctx.effects.len(), 3);
 }
@@ -186,43 +192,46 @@ fn halt_and_restart_reset_memory_cursors_and_activation_state() {
     let mut executor = executor(Node::sequence([action(0), action(1)]));
     let mut ctx = Context::new(2);
     ctx.statuses[0] = Status::Success;
-    tick(&mut executor, &mut ctx, Time::ZERO);
-    executor.halt(&mut ctx);
-    executor.halt(&mut ctx);
+    tick(&mut executor, &mut ctx, Duration::ZERO);
+    assert_eq!(executor.halt(&mut ctx), Halt::Halted);
+    assert_eq!(executor.halt(&mut ctx), Halt::AlreadyIdle);
     assert!(!executor.is_running());
-    tick(&mut executor, &mut ctx, Time::ZERO);
+    tick(&mut executor, &mut ctx, Duration::ZERO);
     assert_eq!(
         ctx.effects,
         [
-            Effect::Start(0, Time::ZERO),
-            Effect::Start(1, Time::ZERO),
+            Effect::Start(0, Duration::ZERO),
+            Effect::Start(1, Duration::ZERO),
             Effect::Halt(1),
-            Effect::Start(0, Time::ZERO),
-            Effect::Start(1, Time::ZERO),
+            Effect::Start(0, Duration::ZERO),
+            Effect::Start(1, Duration::ZERO),
         ],
     );
-    executor.halt(&mut ctx);
+    assert_eq!(executor.halt(&mut ctx), Halt::Halted);
 }
 
 #[test]
 fn unsupported_nodes_and_empty_composites_are_rejected_during_construction() {
     for (tree, name) in [
-        (action(0).timeout(Duration::from_secs(1)), "Timeout"),
-        (Node::sleep(Duration::ZERO), "Sleep"),
+        (
+            action(0).timeout(Duration::from_secs(1)),
+            Unsupported::Timeout,
+        ),
+        (Node::sleep(Duration::ZERO), Unsupported::Sleep),
         (
             Node::if_then_else(condition(0), action(1), action(2)),
-            "IfThenElse",
+            Unsupported::IfThenElse,
         ),
     ] {
-        assert!(
-            matches!(Executor::new(tree), Err(LowerError::Unsupported(found)) if found == name)
-        );
+        assert_eq!(Executor::new(tree).err(), Some(Refusal::Unsupported(name)));
     }
     let empty = Node::<ExecutionLeaf<Scripted, Scripted>>::sequence([]);
-    assert!(matches!(
-        Executor::new(empty),
-        Err(LowerError::EmptyComposite)
-    ));
+    assert_eq!(
+        Executor::new(empty).err(),
+        Some(Refusal::EmptyComposite(
+            behavior_machines::Composite::Sequence
+        ))
+    );
 }
 
 fn compare(tree: &Node<()>, script: &[Status], ticks: usize, action_mask: usize) {
@@ -236,18 +245,20 @@ fn compare(tree: &Node<()>, script: &[Status], ticks: usize, action_mask: usize)
             ExecutionLeaf::Action(Scripted(slot))
         }
     });
-    let Ok(mut reference) = Tree::new(classified.clone().map(Reference)) else {
+    let Ok(mut reference) = Tree::<_, 64>::new(classified.clone().map(Reference)) else {
         panic!("the fixture is valid")
     };
     let mut executor = executor(classified);
     let mut expected = Context::new(count);
     let mut actual = expected.clone();
     for step in 0..ticks {
-        let now = Time::from_nanos(step as u64);
+        let now = Duration::from_nanos(step as u64);
         expected.statuses = script[step * count..(step + 1) * count].to_vec();
         actual.statuses.clone_from(&expected.statuses);
         let mut record = Record::default();
-        let root = reference.tick_observed(&mut expected, now, &mut record);
+        let Ok(root) = reference.tick_observed(&mut expected, now, &mut record) else {
+            panic!("the reference ticks forward")
+        };
         let schedule = tick(&mut executor, &mut actual, now);
         let message = || format!("{tree:?}, script={script:?}, mask={action_mask}, step={step}");
         assert_eq!(schedule.root(), Some(root), "{}", message());
@@ -275,9 +286,8 @@ fn compare(tree: &Node<()>, script: &[Status], ticks: usize, action_mask: usize)
             message()
         );
     }
-    reference.halt(&mut expected);
-    executor.halt(&mut actual);
-    executor.halt(&mut actual);
+    assert_eq!(executor.halt(&mut actual), reference.halt(&mut expected));
+    assert_eq!(executor.halt(&mut actual), Halt::AlreadyIdle);
     assert_eq!(actual, expected, "shutdown: {tree:?}, script={script:?}");
 }
 
@@ -327,7 +337,7 @@ struct Shared {
 struct Flag;
 
 impl Condition<Shared> for Flag {
-    fn evaluate(&self, ctx: &Shared, _now: Time) -> Status {
+    fn evaluate(&self, ctx: &Shared, _now: Duration) -> Status {
         if ctx.flag {
             Status::Success
         } else {
@@ -344,7 +354,7 @@ enum Change {
 }
 
 impl Action<Shared> for Change {
-    fn start(&self, ctx: &mut Shared, _now: Time) -> Status {
+    fn start(&self, ctx: &mut Shared, _now: Duration) -> Status {
         match self {
             Self::SetFlag => {
                 ctx.flag = true;
@@ -365,7 +375,7 @@ impl Action<Shared> for Change {
         }
     }
 
-    fn poll(&self, ctx: &mut Shared, _now: Time) -> Status {
+    fn poll(&self, ctx: &mut Shared, _now: Duration) -> Status {
         assert!(ctx.running);
         ctx.events.push("poll");
         Status::Running
@@ -385,7 +395,7 @@ fn a_later_condition_observes_changes_from_an_earlier_action() {
         Node::leaf(ExecutionLeaf::Condition(Flag)),
     ]));
     let mut ctx = Shared::default();
-    let Ok(schedule) = executor.tick(&mut ctx, Time::ZERO) else {
+    let Ok(schedule) = executor.tick(&mut ctx, Duration::ZERO) else {
         panic!("the internal shapes match")
     };
     assert_eq!(schedule.root(), Some(Status::Success));
@@ -406,9 +416,9 @@ fn abandoned_subtree_halts_before_a_later_sibling_starts() {
         flag: true,
         ..Shared::default()
     };
-    assert!(executor.tick(&mut ctx, Time::ZERO).is_ok());
+    assert!(executor.tick(&mut ctx, Duration::ZERO).is_ok());
     ctx.flag = false;
-    assert!(executor.tick(&mut ctx, Time::ZERO).is_ok());
+    assert!(executor.tick(&mut ctx, Duration::ZERO).is_ok());
     assert_eq!(ctx.events, ["start", "halt", "after"]);
 }
 
@@ -416,7 +426,7 @@ fn abandoned_subtree_halts_before_a_later_sibling_starts() {
 fn conditions_are_not_speculatively_evaluated() {
     struct MustNotRun;
     impl Condition<Context> for MustNotRun {
-        fn evaluate(&self, _ctx: &Context, _now: Time) -> Status {
+        fn evaluate(&self, _ctx: &Context, _now: Duration) -> Status {
             panic!("an unreachable condition must not be evaluated");
         }
     }
@@ -425,7 +435,7 @@ fn conditions_are_not_speculatively_evaluated() {
         Node::leaf(ExecutionLeaf::Condition(MustNotRun)),
     ]));
     let mut ctx = Context::new(1);
-    assert!(executor.tick(&mut ctx, Time::ZERO).is_ok());
+    assert!(executor.tick(&mut ctx, Duration::ZERO).is_ok());
     ctx.statuses[0] = Status::Failure;
-    assert!(executor.tick(&mut ctx, Time::ZERO).is_ok());
+    assert!(executor.tick(&mut ctx, Duration::ZERO).is_ok());
 }

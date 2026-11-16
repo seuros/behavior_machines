@@ -3,16 +3,20 @@ name = "behavior-machines-circuit"
 version = "0.4.1"
 edition.workspace = true
 rust-version.workspace = true
-license = "BSD-3-Clause"
-repository = "https://github.com/seuros/behavior_machines"
+license.workspace = true
+repository.workspace = true
 description = "Compiles a behavior-machines tree into a branchless arithmetic circuit: one layered sparse matmul per tick instead of a recursive tree walk"
 keywords = ["behavior-tree", "no-std", "compiler", "branchless", "differentiable"]
 categories = ["no-std", "algorithms", "game-development"]
 readme = "README.md"
+exclude = ["src/**/tests.rs", "src/test_support.rs", "tests/"]
 
 [dependencies]
-behavior-machines = { path = "../core", version = "0.3.1", default-features = false }
-thiserror = { version = "2.0.21", default-features = false }
+behavior-machines.workspace = true
+
+[dev-dependencies]
+behavior-machines = { workspace = true, features = ["alloc"] }
+matryona-machines = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true

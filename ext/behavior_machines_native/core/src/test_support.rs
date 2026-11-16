@@ -4,9 +4,16 @@
 //! that is not active (never started, already finished, or already halted)
 //! panics immediately.
 
+use core::time::Duration;
 use std::collections::{HashMap, HashSet};
 
-use crate::{Leaf, Node, Status, Threshold, Time, Tree};
+use crate::{Halt, Leaf, Node, Observer, Status, Threshold, Tree};
+
+/// The capacity every test tree is built with.
+pub const CAPACITY: usize = 64;
+
+/// A test tree.
+pub type TestTree<L> = Tree<L, CAPACITY>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -16,14 +23,14 @@ pub enum Event {
 
 /// A leaf whose result is whatever the test scripted for its name; unscripted
 /// leaves keep running.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scripted(pub &'static str);
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Script {
+    pub log: Vec<Event>,
     outcomes: HashMap<&'static str, Status>,
     active: HashSet<&'static str>,
-    pub log: Vec<Event>,
 }
 
 impl Script {
@@ -51,7 +58,7 @@ impl Script {
 }
 
 impl Leaf<Script> for Scripted {
-    fn tick(&self, script: &mut Script, _now: Time) -> Status {
+    fn tick(&self, script: &mut Script, _now: Duration) -> Status {
         script.log.push(Event::Tick(self.0));
         let status = script
             .outcomes
@@ -80,13 +87,62 @@ pub const fn leaf(name: &'static str) -> Node<Scripted> {
     Node::leaf(Scripted(name))
 }
 
-pub fn tree(root: Node<Scripted>) -> Tree<Scripted> {
+pub fn tree(root: Node<Scripted>) -> TestTree<Scripted> {
     Tree::new(root).unwrap()
 }
 
 /// `ms` milliseconds after the clock origin.
-pub const fn at(ms: u64) -> Time {
-    Time::from_nanos(ms * 1_000_000)
+pub const fn at(ms: u64) -> Duration {
+    Duration::from_millis(ms)
+}
+
+/// Ticks that the test expects honoured: a refusal fails the test.
+pub trait Drive<C: ?Sized> {
+    /// [`Tree::tick`], honoured.
+    fn run(&mut self, ctx: &mut C, now: Duration) -> Status;
+
+    /// [`Tree::tick_observed`], honoured.
+    fn run_observed(
+        &mut self,
+        ctx: &mut C,
+        now: Duration,
+        observer: &mut (impl Observer + ?Sized),
+    ) -> Status;
+
+    /// [`Tree::halt`] for cleanup, whatever it answers; the halt tests
+    /// check the answer itself.
+    fn stop(&mut self, ctx: &mut C);
+
+    /// [`Tree::halt_observed`] for cleanup, whatever it answers.
+    fn stop_observed(&mut self, ctx: &mut C, observer: &mut (impl Observer + ?Sized));
+}
+
+impl<L: Leaf<C>, C: ?Sized, const N: usize> Drive<C> for Tree<L, N> {
+    fn run(&mut self, ctx: &mut C, now: Duration) -> Status {
+        self.tick(ctx, now).expect("the tick is honoured")
+    }
+
+    fn run_observed(
+        &mut self,
+        ctx: &mut C,
+        now: Duration,
+        observer: &mut (impl Observer + ?Sized),
+    ) -> Status {
+        self.tick_observed(ctx, now, observer)
+            .expect("the tick is honoured")
+    }
+
+    fn stop(&mut self, ctx: &mut C) {
+        match self.halt(ctx) {
+            Halt::Halted | Halt::AlreadyIdle => {}
+        }
+    }
+
+    fn stop_observed(&mut self, ctx: &mut C, observer: &mut (impl Observer + ?Sized)) {
+        match self.halt_observed(ctx, observer) {
+            Halt::Halted | Halt::AlreadyIdle => {}
+        }
+    }
 }
 
 /// `Parallel` that needs every child to succeed and fails on the first failure.

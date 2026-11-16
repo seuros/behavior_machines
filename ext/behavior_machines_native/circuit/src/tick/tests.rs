@@ -24,7 +24,7 @@ fn the_wrong_number_of_leaf_statuses_is_rejected() {
     let mut state = State::initial(&lowered);
     assert_eq!(
         lowered.evaluate(&mut state, &[Status::Success]),
-        Err(TickError::LeafCount {
+        Err(Refusal::LeafCount {
             expected: 2,
             given: 1
         }),
@@ -38,7 +38,7 @@ fn a_state_from_another_tree_is_rejected() {
     let mut state = State::initial(&other);
     assert_eq!(
         lowered.evaluate(&mut state, &[Status::Success, Status::Success]),
-        Err(TickError::StateShape {
+        Err(Refusal::StateShape {
             expected: 3,
             given: 1
         }),
@@ -50,7 +50,7 @@ fn a_state_from_another_tree_is_rejected() {
         let mut state = State::initial(from);
         assert_eq!(
             tree.evaluate(&mut state, &[Status::Failure, Status::Success]),
-            Err(TickError::CursorShape { expected, given }),
+            Err(Refusal::CursorShape { expected, given }),
         );
     }
 }
@@ -110,8 +110,8 @@ fn the_invariants_hold_over_every_leaf_assignment() {
             }
             // Re-evaluate the circuit directly to validate the raw values.
             let mut cells = alloc::vec![0.0; plan.cell_count() as usize];
-            cells[plan.leaf_status_cell(0, first) as usize] = 1.0;
-            cells[plan.leaf_status_cell(1, second) as usize] = 1.0;
+            cells[plan.leaf_status_cell(0, first).unwrap() as usize] = 1.0;
+            cells[plan.leaf_status_cell(1, second).unwrap() as usize] = 1.0;
             let values = lowered
                 .circuit()
                 .evaluate(&cells)

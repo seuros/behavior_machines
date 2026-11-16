@@ -1,7 +1,10 @@
 use state_machines::state_machine;
 
+use core::time::Duration;
+
 use super::*;
-use crate::{Node, Tree};
+use crate::test_support::{Drive, TestTree};
+use crate::{Halt, Node};
 
 use Status::{Failure, Running, Success};
 
@@ -65,7 +68,7 @@ enum Step {
 }
 
 impl Leaf<World> for Step {
-    fn tick(&self, world: &mut World, now: Time) -> Status {
+    fn tick(&self, world: &mut World, now: Duration) -> Status {
         match self {
             Self::Start(leaf) => leaf.tick(world, now),
             Self::Await(leaf) => leaf.tick(world, now),
@@ -99,7 +102,7 @@ fn assert_cases(leaf: &impl Leaf<World>, cases: &[(Events, Status)]) {
         let mut world = World::new();
         world.drive(events);
         assert_eq!(
-            leaf.tick(&mut world, Time::ZERO),
+            leaf.tick(&mut world, Duration::ZERO),
             *expected,
             "after {} events",
             events.len()
@@ -123,9 +126,9 @@ fn fire_succeeds_only_when_the_machine_accepts_the_event() {
     let mut world = World::new();
     let start = Fire::new(job, || JobEvent::Start);
 
-    assert_eq!(start.tick(&mut world, Time::ZERO), Success);
+    assert_eq!(start.tick(&mut world, Duration::ZERO), Success);
     assert_eq!(world.job.current_state(), JobState::Started);
-    assert_eq!(start.tick(&mut world, Time::ZERO), Failure);
+    assert_eq!(start.tick(&mut world, Duration::ZERO), Failure);
     assert_eq!(world.job.current_state(), JobState::Started);
 }
 
@@ -144,43 +147,43 @@ fn wait_for_classifies_the_current_state() {
 #[test]
 fn tree_drives_the_job_to_completion() {
     let mut world = World::new();
-    let mut tree = Tree::new(run_job()).unwrap();
+    let mut tree = TestTree::new(run_job()).unwrap();
 
-    assert_eq!(tree.tick(&mut world, Time::ZERO), Running);
+    assert_eq!(tree.run(&mut world, Duration::ZERO), Running);
     assert_eq!(world.job.current_state(), JobState::Started);
 
     world.drive(&[|| JobEvent::Complete]);
-    assert_eq!(tree.tick(&mut world, Time::ZERO), Success);
+    assert_eq!(tree.run(&mut world, Duration::ZERO), Success);
 }
 
 #[test]
 fn abandoned_wait_cancels_the_job_once() {
     let mut world = World::new();
-    let mut tree = Tree::new(crate::test_support::race([
+    let mut tree = TestTree::new(crate::test_support::race([
         run_job(),
         Node::leaf(Step::Deadline),
     ]))
     .unwrap();
 
-    assert_eq!(tree.tick(&mut world, Time::ZERO), Running);
+    assert_eq!(tree.run(&mut world, Duration::ZERO), Running);
     world.deadline_passed = true;
-    assert_eq!(tree.tick(&mut world, Time::ZERO), Success);
+    assert_eq!(tree.run(&mut world, Duration::ZERO), Success);
     assert_eq!(world.job.current_state(), JobState::Cancelled);
 
     // Halting again must not dispatch a second cancel.
-    tree.halt(&mut world);
+    assert_eq!(tree.halt(&mut world), Halt::AlreadyIdle);
     assert_eq!(world.job.current_state(), JobState::Cancelled);
 }
 
 #[test]
 fn rejected_halt_event_leaves_a_finished_job_alone() {
     let mut world = World::new();
-    let mut tree = Tree::new(run_job()).unwrap();
+    let mut tree = TestTree::new(run_job()).unwrap();
 
-    assert_eq!(tree.tick(&mut world, Time::ZERO), Running);
+    assert_eq!(tree.run(&mut world, Duration::ZERO), Running);
     // The job finishes between ticks, then the tree is abandoned.
     world.drive(&[|| JobEvent::Complete]);
-    tree.halt(&mut world);
+    assert_eq!(tree.halt(&mut world), Halt::Halted);
 
     assert_eq!(world.job.current_state(), JobState::Completed);
 }

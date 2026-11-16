@@ -1,48 +1,47 @@
+//! The nested definition builder (feature `alloc`).
+
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::fmt;
 use core::time::Duration;
 
-/// A declarative tree definition. Compile it with [`crate::Tree::new`].
+use crate::{Limit, Otherwise, Step, Threshold};
+
+/// A nested tree definition, for hosts with an allocator. It is only a way to
+/// write [`Step`]s: iterating a `Node` yields its steps in pre-order, so it
+/// goes straight to [`Tree::new`](crate::Tree::new), which allocates nothing.
 ///
-/// Node names and semantics follow the behavior-tree pattern. Build nodes
-/// with the variants directly, with the constructors, or with the decorator methods ([`Node::inverter`],
-/// [`Node::timeout`], [`Node::repeat`], ...).
+/// ```
+/// use core::time::Duration;
+/// use behavior_machines::{Node, Tree};
 ///
-/// Decorators that loop (`Repeat`, `RetryUntilSuccessful`,
-/// `KeepRunningUntilFailure`) finish at most one run of their child per tick,
-/// so a child that finishes instantly cannot spin forever inside one tick.
-/// Between runs they are due at once by [`Tree::next_deadline`](crate::Tree::next_deadline).
+/// let tree = Tree::<&str, 8>::new(Node::fallback([
+///     Node::sequence([Node::leaf("battery-low"), Node::leaf("charge")]),
+///     Node::leaf("patrol").timeout(Duration::from_secs(5)),
+/// ]))?;
+/// assert!(!tree.is_running());
+/// # Ok::<(), behavior_machines::Refusal>(())
+/// ```
+///
+/// The variants mirror [`Step`]; see it for each node's semantics.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Node<L> {
-    /// A condition check or action.
+    /// [`Step::Leaf`].
     Leaf(L),
-    /// Succeeds immediately.
+    /// [`Step::AlwaysSuccess`].
     AlwaysSuccess,
-    /// Fails immediately.
+    /// [`Step::AlwaysFailure`].
     AlwaysFailure,
-    /// Runs until the duration has passed since it started, then succeeds.
-    /// A zero duration succeeds immediately.
+    /// [`Step::Sleep`].
     Sleep(Duration),
-    /// Ticks children in order. Fails as soon as one fails and succeeds once
-    /// all succeed. A running child is resumed on the next tick.
+    /// [`Step::Sequence`].
     Sequence(Vec<Self>),
-    /// A [`Node::Sequence`] that restarts from its first child on every tick,
-    /// so earlier children act as guards: once one stops succeeding, the
-    /// running later child is halted.
+    /// [`Step::ReactiveSequence`].
     ReactiveSequence(Vec<Self>),
-    /// Ticks children in order. Succeeds as soon as one succeeds and fails
-    /// once all fail. A running child is resumed on the next tick.
+    /// [`Step::Fallback`].
     Fallback(Vec<Self>),
-    /// A [`Node::Fallback`] that restarts from its first child on every tick,
-    /// so a higher-priority child that starts succeeding or running preempts
-    /// the running lower-priority child, which is halted.
+    /// [`Step::ReactiveFallback`].
     ReactiveFallback(Vec<Self>),
-    /// Ticks every unfinished child, in order, on each tick. Succeeds once
-    /// `success` children have succeeded; fails once `failure` children have
-    /// failed or success can no longer be reached. Running children are
-    /// halted when it decides, and the leftmost child decides ties.
+    /// [`Step::Parallel`].
     Parallel {
         /// The children, all running concurrently.
         children: Vec<Self>,
@@ -51,10 +50,7 @@ pub enum Node<L> {
         /// How many children may fail before the node fails.
         failure: Threshold,
     },
-    /// Ticks `condition` until it finishes, then runs `then` if it succeeded
-    /// or `otherwise` if it failed, and reports that branch's status. Without
-    /// `otherwise`, a failed condition fails the node. The condition is not
-    /// ticked again while the branch runs.
+    /// [`Step::IfThenElse`].
     IfThenElse {
         /// Decides the branch, once.
         condition: Box<Self>,
@@ -63,11 +59,7 @@ pub enum Node<L> {
         /// Runs after the condition fails.
         otherwise: Option<Box<Self>>,
     },
-    /// The reactive [`Node::IfThenElse`]: ticks `condition` on every tick and
-    /// runs `body` while it succeeds or `otherwise` while it fails, halting
-    /// the other branch first when the condition flips. While the condition
-    /// runs, the branches are paused: not ticked and not halted. Without
-    /// `otherwise`, a failed condition fails the node.
+    /// [`Step::WhileDoElse`].
     WhileDoElse {
         /// Re-evaluated on every tick.
         condition: Box<Self>,
@@ -76,47 +68,20 @@ pub enum Node<L> {
         /// Runs while the condition fails.
         otherwise: Option<Box<Self>>,
     },
-    /// Swaps the child's [`Success`](crate::Status::Success) and
-    /// [`Failure`](crate::Status::Failure).
+    /// [`Step::Inverter`].
     Inverter(Box<Self>),
-    /// Reports any finished child as [`Success`](crate::Status::Success).
+    /// [`Step::ForceSuccess`].
     ForceSuccess(Box<Self>),
-    /// Reports any finished child as [`Failure`](crate::Status::Failure).
+    /// [`Step::ForceFailure`].
     ForceFailure(Box<Self>),
-    /// Fails, halting the child, once the duration has passed since this node
-    /// started. The child only ticks strictly before the deadline, so a zero
-    /// duration fails without ticking it. To run without a limit, leave the
-    /// decorator out.
+    /// [`Step::Timeout`].
     Timeout(Duration, Box<Self>),
-    /// Runs the child again each time it succeeds, until it has succeeded
-    /// `limit` times, then succeeds. Fails as soon as the child fails.
+    /// [`Step::Repeat`].
     Repeat(Limit, Box<Self>),
-    /// Runs the child again each time it fails, until it has failed `limit`
-    /// times, then fails. Succeeds as soon as the child succeeds.
+    /// [`Step::RetryUntilSuccessful`].
     RetryUntilSuccessful(Limit, Box<Self>),
-    /// Runs the child again each time it succeeds, forever. Fails as soon as
-    /// the child fails.
+    /// [`Step::KeepRunningUntilFailure`].
     KeepRunningUntilFailure(Box<Self>),
-}
-
-/// How many children of a [`Node::Parallel`] a decision needs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Threshold {
-    /// Every child.
-    All,
-    /// This many children, between 1 and the number of children. Zero is
-    /// rejected when the tree is built, since it would decide before any child
-    /// finishes.
-    Count(usize),
-}
-
-/// How many runs a looping decorator allows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Limit {
-    /// This many runs. Zero finishes immediately without ticking the child.
-    Times(usize),
-    /// No limit.
-    Unlimited,
 }
 
 impl<L> Node<L> {
@@ -306,6 +271,145 @@ impl<L> Node<L> {
             Self::KeepRunningUntilFailure(child) => Node::KeepRunningUntilFailure(boxed(child)),
         }
     }
+
+    /// This node's steps with every leaf borrowed, in pre-order.
+    #[must_use]
+    pub fn iter(&self) -> StepsRef<'_, L> {
+        StepsRef {
+            pending: alloc::vec![self],
+        }
+    }
+
+    /// This node's own step, and its children in order.
+    fn unfold(self) -> (Step<L>, Vec<Self>) {
+        let otherwise = |branch: &Option<Box<Self>>| match branch {
+            Some(_) => Otherwise::Present,
+            None => Otherwise::Absent,
+        };
+        let three = |first: Box<Self>, second: Box<Self>, third: Option<Box<Self>>| {
+            let mut children = alloc::vec![*first, *second];
+            children.extend(third.map(|node| *node));
+            children
+        };
+        match self {
+            Self::Leaf(leaf) => (Step::Leaf(leaf), Vec::new()),
+            Self::AlwaysSuccess => (Step::AlwaysSuccess, Vec::new()),
+            Self::AlwaysFailure => (Step::AlwaysFailure, Vec::new()),
+            Self::Sleep(duration) => (Step::Sleep(duration), Vec::new()),
+            Self::Sequence(children) => (Step::Sequence(children.len()), children),
+            Self::ReactiveSequence(children) => (Step::ReactiveSequence(children.len()), children),
+            Self::Fallback(children) => (Step::Fallback(children.len()), children),
+            Self::ReactiveFallback(children) => (Step::ReactiveFallback(children.len()), children),
+            Self::Parallel {
+                children,
+                success,
+                failure,
+            } => (
+                Step::Parallel {
+                    children: children.len(),
+                    success,
+                    failure,
+                },
+                children,
+            ),
+            Self::IfThenElse {
+                condition,
+                then,
+                otherwise: other,
+            } => (
+                Step::IfThenElse(otherwise(&other)),
+                three(condition, then, other),
+            ),
+            Self::WhileDoElse {
+                condition,
+                body,
+                otherwise: other,
+            } => (
+                Step::WhileDoElse(otherwise(&other)),
+                three(condition, body, other),
+            ),
+            Self::Inverter(child) => (Step::Inverter, alloc::vec![*child]),
+            Self::ForceSuccess(child) => (Step::ForceSuccess, alloc::vec![*child]),
+            Self::ForceFailure(child) => (Step::ForceFailure, alloc::vec![*child]),
+            Self::Timeout(limit, child) => (Step::Timeout(limit), alloc::vec![*child]),
+            Self::Repeat(limit, child) => (Step::Repeat(limit), alloc::vec![*child]),
+            Self::RetryUntilSuccessful(limit, child) => {
+                (Step::RetryUntilSuccessful(limit), alloc::vec![*child])
+            }
+            Self::KeepRunningUntilFailure(child) => {
+                (Step::KeepRunningUntilFailure, alloc::vec![*child])
+            }
+        }
+    }
+
+    /// This node's own step with its leaf borrowed, and its children.
+    fn unfold_ref(&self) -> (Step<&L>, Vec<&Self>) {
+        let present = |branch: Option<&Self>| match branch {
+            Some(_) => Otherwise::Present,
+            None => Otherwise::Absent,
+        };
+        match self {
+            Self::Leaf(leaf) => (Step::Leaf(leaf), Vec::new()),
+            Self::AlwaysSuccess => (Step::AlwaysSuccess, Vec::new()),
+            Self::AlwaysFailure => (Step::AlwaysFailure, Vec::new()),
+            Self::Sleep(duration) => (Step::Sleep(*duration), Vec::new()),
+            Self::Sequence(children) => (Step::Sequence(children.len()), children.iter().collect()),
+            Self::ReactiveSequence(children) => (
+                Step::ReactiveSequence(children.len()),
+                children.iter().collect(),
+            ),
+            Self::Fallback(children) => (Step::Fallback(children.len()), children.iter().collect()),
+            Self::ReactiveFallback(children) => (
+                Step::ReactiveFallback(children.len()),
+                children.iter().collect(),
+            ),
+            Self::Parallel {
+                children,
+                success,
+                failure,
+            } => (
+                Step::Parallel {
+                    children: children.len(),
+                    success: *success,
+                    failure: *failure,
+                },
+                children.iter().collect(),
+            ),
+            Self::IfThenElse {
+                condition,
+                then,
+                otherwise,
+            } => {
+                let otherwise = otherwise.as_deref();
+                (
+                    Step::IfThenElse(present(otherwise)),
+                    branches(condition, then, otherwise),
+                )
+            }
+            Self::WhileDoElse {
+                condition,
+                body,
+                otherwise,
+            } => {
+                let otherwise = otherwise.as_deref();
+                (
+                    Step::WhileDoElse(present(otherwise)),
+                    branches(condition, body, otherwise),
+                )
+            }
+            Self::Inverter(child) => (Step::Inverter, alloc::vec![&**child]),
+            Self::ForceSuccess(child) => (Step::ForceSuccess, alloc::vec![&**child]),
+            Self::ForceFailure(child) => (Step::ForceFailure, alloc::vec![&**child]),
+            Self::Timeout(limit, child) => (Step::Timeout(*limit), alloc::vec![&**child]),
+            Self::Repeat(limit, child) => (Step::Repeat(*limit), alloc::vec![&**child]),
+            Self::RetryUntilSuccessful(limit, child) => {
+                (Step::RetryUntilSuccessful(*limit), alloc::vec![&**child])
+            }
+            Self::KeepRunningUntilFailure(child) => {
+                (Step::KeepRunningUntilFailure, alloc::vec![&**child])
+            }
+        }
+    }
 }
 
 fn map_all<L, M, F: FnMut(L) -> M>(children: Vec<Node<L>>, f: &mut F) -> Vec<Node<M>> {
@@ -315,32 +419,66 @@ fn map_all<L, M, F: FnMut(L) -> M>(children: Vec<Node<L>>, f: &mut F) -> Vec<Nod
         .collect()
 }
 
-/// The nodes that need at least one child, as reported by
-/// [`crate::BuildError`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Composite {
-    /// [`Node::Sequence`].
-    Sequence,
-    /// [`Node::ReactiveSequence`].
-    ReactiveSequence,
-    /// [`Node::Fallback`].
-    Fallback,
-    /// [`Node::ReactiveFallback`].
-    ReactiveFallback,
-    /// [`Node::Parallel`].
-    Parallel,
+/// A conditional's children, borrowed, in order.
+fn branches<'a, L>(
+    first: &'a Node<L>,
+    second: &'a Node<L>,
+    third: Option<&'a Node<L>>,
+) -> Vec<&'a Node<L>> {
+    let mut children = alloc::vec![first, second];
+    children.extend(third);
+    children
 }
 
-impl fmt::Display for Composite {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Sequence => "Sequence",
-            Self::ReactiveSequence => "ReactiveSequence",
-            Self::Fallback => "Fallback",
-            Self::ReactiveFallback => "ReactiveFallback",
-            Self::Parallel => "Parallel",
-        })
+/// The steps of a [`Node`], in pre-order, consuming it.
+#[derive(Debug)]
+pub struct Steps<L> {
+    pending: Vec<Node<L>>,
+}
+
+/// The steps of a borrowed [`Node`], in pre-order, with every leaf borrowed.
+#[derive(Debug)]
+pub struct StepsRef<'a, L> {
+    pending: Vec<&'a Node<L>>,
+}
+
+impl<L> IntoIterator for Node<L> {
+    type Item = Step<L>;
+    type IntoIter = Steps<L>;
+
+    fn into_iter(self) -> Steps<L> {
+        Steps {
+            pending: alloc::vec![self],
+        }
+    }
+}
+
+impl<'a, L> IntoIterator for &'a Node<L> {
+    type Item = Step<&'a L>;
+    type IntoIter = StepsRef<'a, L>;
+
+    fn into_iter(self) -> StepsRef<'a, L> {
+        self.iter()
+    }
+}
+
+impl<L> Iterator for Steps<L> {
+    type Item = Step<L>;
+
+    fn next(&mut self) -> Option<Step<L>> {
+        let (step, children) = self.pending.pop()?.unfold();
+        self.pending.extend(children.into_iter().rev());
+        Some(step)
+    }
+}
+
+impl<'a, L> Iterator for StepsRef<'a, L> {
+    type Item = Step<&'a L>;
+
+    fn next(&mut self) -> Option<Step<&'a L>> {
+        let (step, children) = self.pending.pop()?.unfold_ref();
+        self.pending.extend(children.into_iter().rev());
+        Some(step)
     }
 }
 

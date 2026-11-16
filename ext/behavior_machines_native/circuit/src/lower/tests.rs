@@ -4,7 +4,9 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use behavior_machines::{Limit, Threshold};
+use behavior_machines::{Limit, Node, Otherwise, Threshold};
+
+use crate::Unsupported;
 
 use crate::test_support::{leaf, lower, two_leaf_sequence};
 
@@ -128,45 +130,78 @@ fn depth_grows_with_nesting() {
 }
 
 #[test]
-fn an_empty_composite_is_rejected() {
+fn an_empty_composite_is_refused() {
     let empty: Node<()> = Node::sequence([]);
     assert_eq!(
         Lowered::new(&empty).unwrap_err(),
-        LowerError::EmptyComposite
+        Refusal::EmptyComposite(Composite::Sequence)
     );
 }
 
 #[test]
+fn steps_that_are_not_exactly_one_tree_are_refused() {
+    let cases: [(&[Step<()>], Refusal); 4] = [
+        (&[], Refusal::Incomplete),
+        (&[Step::Fallback(2), Step::Leaf(())], Refusal::Incomplete),
+        (&[Step::Leaf(()), Step::Leaf(())], Refusal::Trailing),
+        (
+            &[Step::Inverter, Step::Leaf(()), Step::AlwaysSuccess],
+            Refusal::Trailing,
+        ),
+    ];
+    for (steps, refusal) in cases {
+        assert_eq!(
+            Lowered::new(steps.iter().copied()).unwrap_err(),
+            refusal,
+            "{steps:?}"
+        );
+    }
+}
+
+#[test]
 fn unsupported_nodes_are_named() {
-    type Case = (&'static str, fn() -> Node<()>);
+    type Case = (Unsupported, fn() -> Node<()>);
     const CASES: &[Case] = &[
-        ("Sleep", || Node::sleep(Duration::from_secs(1))),
-        ("Parallel", || {
+        (Unsupported::Sleep, || Node::sleep(Duration::from_secs(1))),
+        (Unsupported::Parallel, || {
             Node::parallel([leaf()], Threshold::All, Threshold::All)
         }),
-        ("IfThenElse", || Node::if_then(leaf(), leaf())),
-        ("WhileDoElse", || Node::while_do(leaf(), leaf())),
-        ("Timeout", || leaf().timeout(Duration::from_secs(1))),
-        ("Repeat", || leaf().repeat(Limit::Times(2))),
-        ("RetryUntilSuccessful", || {
+        (Unsupported::IfThenElse, || Node::if_then(leaf(), leaf())),
+        (Unsupported::WhileDoElse, || Node::while_do(leaf(), leaf())),
+        (Unsupported::Timeout, || {
+            leaf().timeout(Duration::from_secs(1))
+        }),
+        (Unsupported::Repeat, || leaf().repeat(Limit::Times(2))),
+        (Unsupported::RetryUntilSuccessful, || {
             leaf().retry_until_successful(Limit::Unlimited)
         }),
-        ("KeepRunningUntilFailure", || {
+        (Unsupported::KeepRunningUntilFailure, || {
             leaf().keep_running_until_failure()
         }),
     ];
-    for (name, build) in CASES {
+    for (node, build) in CASES {
         assert_eq!(
             Lowered::new(&build()).unwrap_err(),
-            LowerError::Unsupported(name),
-            "lowering {name}",
+            Refusal::Unsupported(*node),
+            "lowering {node}",
         );
         // The message names the node, so a caller can act on it.
+        let name = node.to_string();
         assert!(
-            LowerError::Unsupported(name).to_string().contains(name),
-            "the error message must name {name}",
+            Refusal::Unsupported(*node).to_string().contains(&name),
+            "the message must name {name}",
         );
     }
+    let otherwise = [
+        Step::IfThenElse(Otherwise::Present),
+        Step::Leaf(()),
+        Step::Leaf(()),
+        Step::Leaf(()),
+    ];
+    assert_eq!(
+        Lowered::new(otherwise).unwrap_err(),
+        Refusal::Unsupported(Unsupported::IfThenElse)
+    );
 }
 
 #[test]
@@ -174,6 +209,6 @@ fn an_unsupported_node_is_found_below_a_supported_one() {
     let tree = Node::sequence([leaf(), Node::sleep(Duration::from_secs(1))]);
     assert_eq!(
         Lowered::new(&tree).unwrap_err(),
-        LowerError::Unsupported("Sleep")
+        Refusal::Unsupported(Unsupported::Sleep)
     );
 }

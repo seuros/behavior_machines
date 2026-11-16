@@ -30,9 +30,9 @@ impl StatusBits {
     #[must_use]
     pub const fn unticked() -> Self {
         Self {
-            success: Bit::constant(false),
-            failure: Bit::constant(false),
-            running: Bit::constant(false),
+            success: Bit::ZERO,
+            failure: Bit::ZERO,
+            running: Bit::ZERO,
         }
     }
 
@@ -40,7 +40,7 @@ impl StatusBits {
     #[must_use]
     pub fn constant(status: Status) -> Self {
         let mut bits = Self::unticked();
-        *bits.bit_mut(status) = Bit::constant(true);
+        *bits.bit_mut(status) = Bit::ONE;
         bits
     }
 

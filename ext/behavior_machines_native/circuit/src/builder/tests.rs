@@ -3,7 +3,7 @@ use super::*;
 /// One bit per input cell of `builder`.
 fn input_bits(builder: &Builder, count: u32) -> Vec<Bit> {
     (0..count)
-        .map(|index| Bit::assume(builder.input(index)))
+        .map(|index| Bit::assume(builder.input(index).unwrap()))
         .collect()
 }
 
@@ -27,7 +27,7 @@ fn truth_table(inputs: u32, build: impl FnOnce(&mut Builder, &[Bit]) -> Bit) -> 
         .map(|assignment| {
             let cells: Vec<f32> = cells(assignment, inputs);
             let values = circuit.evaluate(&cells).expect("one cell per input");
-            result.form().value(&values) != 0.0
+            result.form().value(&values).unwrap() != 0.0
         })
         .collect()
 }
@@ -35,7 +35,7 @@ fn truth_table(inputs: u32, build: impl FnOnce(&mut Builder, &[Bit]) -> Bit) -> 
 #[test]
 fn not_is_free_and_correct() {
     let builder = Builder::new(1);
-    let bit = Bit::assume(builder.input(0));
+    let bit = Bit::assume(builder.input(0).unwrap());
     let before = builder.circuit().ops().len();
     let _ = bit.not();
     assert_eq!(
@@ -95,7 +95,7 @@ fn is_zero_costs_one_operation_and_detects_zero() {
         let values = circuit.evaluate(&cells).expect("three cells");
         let expected = assignment == 0;
         assert_eq!(
-            zero.form().value(&values) != 0.0,
+            zero.form().value(&values).unwrap() != 0.0,
             expected,
             "assignment {assignment}"
         );
@@ -129,7 +129,7 @@ fn shortfall_is_the_complement_of_a_count() {
     let shortfall = Count::shortfall(2.0, bits);
     let circuit = builder.finish();
     let values = circuit.evaluate(&[1.0, 0.0]).expect("two cells");
-    assert_eq!(shortfall.form().value(&values), 1.0);
+    assert_eq!(shortfall.form().value(&values).unwrap(), 1.0);
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn none_earlier_marks_positions_with_nothing_set_before_them() {
         for (index, bit) in none_earlier.iter().enumerate() {
             let expected = (0..index).all(|earlier| assignment >> earlier & 1 == 0);
             assert_eq!(
-                bit.form().value(&values) != 0.0,
+                bit.form().value(&values).unwrap() != 0.0,
                 expected,
                 "assignment {assignment}, position {index}",
             );
@@ -179,7 +179,7 @@ fn none_earlier_with_the_bits_picks_exactly_the_first_one() {
             .expect("three cells");
         let set: Vec<bool> = picked
             .iter()
-            .map(|bit| bit.form().value(&values) != 0.0)
+            .map(|bit| bit.form().value(&values).unwrap() != 0.0)
             .collect();
         assert_eq!(
             set.iter().position(|chosen| *chosen),
@@ -210,22 +210,13 @@ fn constants_fold_without_appending_operations() {
         builder.at_least(&Count::constant(2.0), 2.0).as_constant(),
         Some(true)
     );
+    assert_eq!(builder.and(&Bit::ONE, &Bit::ONE).as_constant(), Some(true));
     assert_eq!(
-        builder
-            .and(&Bit::constant(true), &Bit::constant(true))
-            .as_constant(),
-        Some(true)
-    );
-    assert_eq!(
-        builder
-            .and(&Bit::constant(false), &Bit::constant(true))
-            .as_constant(),
+        builder.and(&Bit::ZERO, &Bit::ONE).as_constant(),
         Some(false)
     );
     assert_eq!(
-        builder
-            .or(&Bit::constant(false), &Bit::constant(false))
-            .as_constant(),
+        builder.or(&Bit::ZERO, &Bit::ZERO).as_constant(),
         Some(false)
     );
 

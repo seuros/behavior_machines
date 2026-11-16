@@ -5,8 +5,14 @@ circuit. A pure tick becomes a fixed, layered evaluation of affine forms and
 rectified gates instead of a recursive walk. A staged executor also supports
 effectful actions without running unreachable leaves.
 
-Build the tree with the behavior-machines release this crate depends on: a
-`Node` from another release is a different type and does not lower.
+A definition is the core's pre-order `Step`s, the same input
+`behavior_machines::Tree::new` takes; a borrowed `Node` (core feature
+`alloc`) is such a sequence. Build it with the behavior-machines release this
+crate depends on: a `Step` from another release is a different type.
+
+The crate needs an allocator: it is a compiler, and a circuit's size follows
+the tree's. Every refusal is one exhaustive `Refusal`, and a refusal changes
+nothing.
 
 ```rust
 use behavior_machines::{Node, Status};
@@ -80,8 +86,11 @@ single-pass evaluation; use `Executor` for effects.
 - `Executor::tick(ctx, now)` returns the final `Schedule`, **after** performing
   its effects. Do not execute the returned schedule a second time.
 - `Executor::halt(ctx)` cancels active actions exactly once and resets memory
-  cursors. Call it before dropping a running executor; `Drop` cannot access
-  the host's context.
+  cursors, answering `Halt::Halted`, or `Halt::AlreadyIdle` when nothing ran.
+  Call it before dropping a running executor; `Drop` cannot access the host's
+  context.
+- A tick earlier than the latest honoured one is refused
+  (`Refusal::TimeRegression`) and runs nothing, as in the engine.
 
 Unresolved leaves provisionally return `Running`, so the circuit identifies
 the next reachable leaf without executing any later one. The executor runs that
@@ -121,16 +130,16 @@ Lowered: `Leaf`, `AlwaysSuccess`, `AlwaysFailure`, `Sequence`, `Fallback`,
 `ReactiveSequence`, `ReactiveFallback`, `Inverter`, `ForceSuccess`,
 `ForceFailure`.
 
-Everything else returns `LowerError::Unsupported` with the node's name:
+Everything else is refused with `Refusal::Unsupported`, naming the step:
 `Parallel`, `IfThenElse`, `WhileDoElse`, `Sleep`, `Timeout`, `Repeat`,
-`RetryUntilSuccessful`, `KeepRunningUntilFailure`. `Node` is
-`#[non_exhaustive]`, so a node added to the engine later lands there too
-rather than compiling to something wrong by accident.
+`RetryUntilSuccessful`, `KeepRunningUntilFailure`. `Step` is exhaustive, so a
+step added to the engine later fails to compile here until it is lowered or
+named, rather than compiling to something wrong by accident.
 
 Both the pure evaluator and effectful executor enforce this node set.
 
-The timed nodes need care beyond arithmetic: the engine's clock is `u64`
-nanoseconds and `f32` holds integers exactly only below 2^24, so a deadline
+The timed nodes need care beyond arithmetic: the engine's clock is a
+`Duration` and `f32` holds integers exactly only below 2^24, so a deadline
 cannot enter a circuit as an absolute time. They will take **relative**
 deadlines, with `next_deadline` staying integer math on the host.
 
@@ -138,8 +147,8 @@ deadlines, with `next_deadline` staying integer math on the host.
 
 Three passes, compiled by [`Lowered::new`]:
 
-1. **Flatten** the definition in the engine's pre-order, so a node's index is
-   its `NodeId` and every descendant sits at a higher index.
+1. **Flatten** the steps, already the engine's pre-order, so a node's index
+   is its `NodeId` and every descendant sits at a higher index.
 2. **Arbitrate** bottom-up: each node's *raw* status, meaning what it would
    return if it were ticked. This depends only on children's raw statuses and
    the node's own state, never on whether the node is reached.
@@ -198,14 +207,9 @@ is no threshold for a rounding error to land on.
 
 ## Validation
 
-The October 28, 2026 checkpoint was validated with Rust 1.99.0:
-
-- 64 circuit tests and one doctest, including effect-order parity against
-  the regular engine over all status scripts/classifications in the fixtures.
-- 61 core tests and one doctest with all features.
-- Strict all-target circuit Clippy, formatting and warning-free Rustdoc.
-- The inference example and bare-metal `thumbv7em-none-eabihf` builds of
-  the circuit and all-feature core.
+The circuit tests include effect-order parity against the regular engine over
+every status script and classification in the fixtures, and pure-evaluation
+parity over every script of several ticks.
 
 ## License
 

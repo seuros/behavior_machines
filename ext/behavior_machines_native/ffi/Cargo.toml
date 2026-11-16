@@ -3,23 +3,21 @@ name = "behavior_machines_native"
 version = "0.1.4"
 edition.workspace = true
 rust-version.workspace = true
-license = "BSD-3-Clause"
+license.workspace = true
+repository.workspace = true
 description = "Ruby bindings for the behavior-machines engine"
-repository = "https://github.com/seuros/behavior_machines"
 publish = false
 
 [lib]
 crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+behavior-machines.workspace = true
+magnus.workspace = true
+rb-sys.workspace = true
+matryona-machines = { workspace = true, features = ["ruby"] }
 
 [lints]
 workspace = true
-
-[dependencies]
-behavior-machines = { path = "../core", version = "0.3.1" }
-magnus = { version = ">= 0.9.3", default-features = false, features = ["io"] }
-# Nothing here calls rb-sys directly: this is the compiled fallback that
-# implements the stable API for a Ruby rb-sys ships no pre-generated bindings
-# for, such as a preview. magnus asks for "stable-api" without it, and its
-# default-features = false drops the default that would have supplied it, so
-# dropping this line breaks the build on every Ruby newer than rb-sys.
-rb-sys = { version = ">= 0.9.130", default-features = false, features = ["stable-api-compiled-fallback"] }

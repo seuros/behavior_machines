@@ -17,5 +17,3 @@ Gemfile.lock
 lib/**/*.bundle
 lib/**/*.so
 
-# Cargo locks (library, not application)
-Cargo.lock

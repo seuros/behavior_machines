@@ -3,20 +3,25 @@ name = "behavior-machines"
 version = "0.3.1"
 edition.workspace = true
 rust-version.workspace = true
-license = "BSD-3-Clause"
-repository = "https://github.com/seuros/behavior_machines"
-description = "Behavior trees with explicit halt semantics - no_std, composes the state_machines ecosystem"
+license.workspace = true
+repository.workspace = true
+description = "Behavior trees with explicit halt semantics: no_std, allocation-free, composes the state_machines ecosystem"
 keywords = ["behavior-tree", "ai", "no-std", "workflow", "state-machine"]
 categories = ["no-std", "algorithms", "game-development"]
 readme = "README.md"
-exclude = ["src/**/tests.rs", "tests/"]
+exclude = ["src/**/tests.rs", "src/test_support.rs", "tests/"]
+
 [features]
+# The nested `Node` builder, which allocates. The tree never does.
+alloc = []
 # Leaves that drive a state-machines dynamic machine (`machine` module).
 state-machines = ["dep:state-machines"]
 
 [dependencies]
-state-machines = { version = "0.34", default-features = false, optional = true }
-thiserror = { version = "2.0.21", default-features = false }
+state-machines = { workspace = true, optional = true }
+
+[dev-dependencies]
+matryona-machines = { workspace = true, features = ["testing"] }
 
 [package.metadata.docs.rs]
 all-features = true

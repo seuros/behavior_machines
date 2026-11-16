@@ -6,10 +6,6 @@ require 'behavior_machines'
 require 'set'
 require 'minitest/autorun'
 
-if ENV['BEHAVIOR_MACHINES_NATIVE'] == '1' && !BehaviorMachines.native_available?
-  abort "Native backend requested but not loaded: #{BehaviorMachines::NativeExtension.error}"
-end
-
 # MOCKED: scripted leaves and a recording context. Halting a leaf that is not
 # active (never started, finished, or already halted) raises immediately, so
 # every test also checks the halt contract.
@@ -69,8 +65,9 @@ module TestSupport
   def ms(value) = value * 1_000_000
   def tick(name) = [:tick, name]
   def halted(name) = [:halt, name]
-  def race(*children) = BM.parallel(*children, success: 1, failure: 1)
-  def parallel_any(*children) = BM.parallel(*children, success: 1, failure: :all)
+  def parallel_all(*children) = BM.parallel(children, :all, 1)
+  def race(*children) = BM.parallel(children, 1, 1)
+  def parallel_any(*children) = BM.parallel(children, 1, :all)
 end
 
 module Minitest

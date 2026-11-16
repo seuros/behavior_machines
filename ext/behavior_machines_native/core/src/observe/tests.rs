@@ -1,7 +1,7 @@
 use super::*;
 use crate::Node;
 use crate::Status::{Running, Success};
-use crate::test_support::{Script, at, leaf, race, tree};
+use crate::test_support::{Drive, Script, at, leaf, race, tree};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Report {
@@ -33,10 +33,10 @@ fn reports_pre_order_ids_with_children_before_parents() {
     let mut recorder = Recorder::default();
 
     assert_eq!(
-        tree.tick_observed(&mut script, at(0), &mut recorder),
+        tree.run_observed(&mut script, at(0), &mut recorder),
         Running
     );
-    tree.halt_observed(&mut script, &mut recorder);
+    tree.stop_observed(&mut script, &mut recorder);
 
     assert_eq!(
         recorder.0,
@@ -71,7 +71,7 @@ fn numbers_conditions_before_branches_and_bodies() {
 
     // Observers also work as trait objects.
     let observer: &mut dyn Observer = &mut recorder;
-    assert_eq!(tree.tick_observed(&mut script, at(0), observer), Running);
+    assert_eq!(tree.run_observed(&mut script, at(0), observer), Running);
 
     assert_eq!(
         recorder.0,
@@ -85,7 +85,7 @@ fn numbers_conditions_before_branches_and_bodies() {
             Ticked(0, Running),
         ]
     );
-    tree.halt(&mut script);
+    tree.stop(&mut script);
     script.assert_idle();
 }
 

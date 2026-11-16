@@ -5,7 +5,6 @@ require 'weakref'
 require 'state_machines'
 
 # Error paths, timer edges, GC retention, and state_machines integration.
-# Runs against both backends (rake test:both).
 class EdgeCaseTest < Minitest::Test
   class ProbeError < StandardError; end
   class FatalProbe < Exception; end
@@ -41,15 +40,15 @@ class EdgeCaseTest < Minitest::Test
     script = Script.new
     bomb = Tripwire.new
     subject = tree(parallel_any(BM.leaf(bomb), leaf('active')))
-    assert_equal :running, subject.tick(script, now: 0)
+    assert_equal :running, subject.tick(script, 0)
     bomb.armed = true
-    assert_raises(ProbeError) { subject.tick(script, now: 1) }
+    assert_raises(ProbeError) { subject.tick(script, 1) }
     assert_equal 1, script.count(halted('active')), script.log.inspect
     script.assert_idle!
     subject.halt(script)
     assert_equal 1, script.count(halted('active'))
     bomb.armed = false
-    assert_equal :running, subject.tick(script, now: 2)
+    assert_equal :running, subject.tick(script, 2)
     subject.halt(script)
     script.assert_idle!
   end
@@ -58,9 +57,9 @@ class EdgeCaseTest < Minitest::Test
     script = Script.new
     script.set('guard', :failure)
     subject = tree(BM.reactive_fallback(leaf('guard'), leaf('active')))
-    assert_equal :running, subject.tick(script, now: 0)
+    assert_equal :running, subject.tick(script, 0)
     script.set('guard', :invalid)
-    assert_raises(BM::InvalidStatusError) { subject.tick(script, now: 1) }
+    assert_raises(RangeError) { subject.tick(script, 1) }
     assert_equal 1, script.count(halted('active')), script.log.inspect
     script.assert_idle!
     subject.halt(script)
@@ -71,10 +70,10 @@ class EdgeCaseTest < Minitest::Test
     script = Script.new
     observer = Observer.new
     subject = tree(parallel_any(leaf('left'), leaf('right')))
-    assert_equal :running, subject.tick(script, now: 0, observer:)
+    assert_equal :running, subject.tick_observed(script, 0, observer)
     observer.reports.clear
     observer.trip_tick = 1
-    assert_raises(ProbeError) { subject.tick(script, now: 1, observer:) }
+    assert_raises(ProbeError) { subject.tick_observed(script, 1, observer) }
     assert_equal [[:ticked, 1, :running]], observer.reports
     assert_equal [1, 1], %w[left right].map { script.count(halted(_1)) }
     script.assert_idle!
@@ -83,10 +82,10 @@ class EdgeCaseTest < Minitest::Test
   def test_halted_observer_error_still_cleans_up_every_active_leaf
     script = Script.new
     observer = Observer.new
-    subject = tree(BM.parallel(leaf('a'), leaf('b'), leaf('c')))
-    subject.tick(script, now: 0)
+    subject = tree(parallel_all(leaf('a'), leaf('b'), leaf('c')))
+    subject.tick(script, 0)
     observer.trip_halt = 1
-    assert_raises(ProbeError) { subject.halt(script, observer:) }
+    assert_raises(ProbeError) { subject.halt_observed(script, observer) }
     assert_equal [[:halted, 1]], observer.reports
     assert_equal [1, 1, 1], %w[a b c].map { script.count(halted(_1)) }
     script.assert_idle!
@@ -99,11 +98,11 @@ class EdgeCaseTest < Minitest::Test
     observer = Observer.new
     script.set('guard', :success)
     # ids: root 0, guard 1, parallel 2, a 3, b 4.
-    subject = tree(BM.reactive_sequence(leaf('guard'), BM.parallel(leaf('a'), leaf('b'))))
-    assert_equal :running, subject.tick(script, now: 0)
+    subject = tree(BM.reactive_sequence(leaf('guard'), parallel_all(leaf('a'), leaf('b'))))
+    assert_equal :running, subject.tick(script, 0)
     script.set('guard', :failure)
     observer.trip_halt = 3
-    assert_raises(ProbeError) { subject.tick(script, now: 1, observer:) }
+    assert_raises(ProbeError) { subject.tick_observed(script, 1, observer) }
     assert_equal [[:ticked, 1, :failure], [:halted, 3]], observer.reports
     assert_equal [1, 1], %w[a b].map { script.count(halted(_1)) }
     script.assert_idle!
@@ -111,30 +110,16 @@ class EdgeCaseTest < Minitest::Test
     assert_equal [1, 1], %w[a b].map { script.count(halted(_1)) }
   end
 
-  def test_limits_beyond_the_64_bit_range_are_rejected_at_build_time
-    [leaf('work').repeat(2**64), leaf('work').retry_until_successful(2**64)].each do |root|
-      assert_raises(BM::BuildError) { tree(root) }
-    end
-    assert_equal :running, tree(leaf('work').repeat((2**64) - 1)).tick(Script.new, now: 0)
-  end
-
-  def test_false_otherwise_is_rejected_by_shared_definition_validation
-    # nil means absent; false is not a node. It must not be silently treated
-    # as absent by one backend and sent to an Array conversion by the other.
-    root = BM.if_then_else(BM.always_failure, BM.always_success, false)
-    assert_raises(BM::BuildError) { tree(root) }
-  end
-
   class InspectRaises
     def tick(_ctx, _now) = :invalid
     def inspect = raise(ProbeError, 'inspect failed')
   end
 
-  def test_inspect_exception_propagates_identically_when_reporting_invalid_status
+  def test_an_invalid_status_raises_without_running_more_ruby
     script = Script.new
-    subject = tree(BM.parallel(leaf('active'), BM.leaf(InspectRaises.new)))
-    error = assert_raises(ProbeError) { subject.tick(script, now: 0) }
-    assert_equal 'inspect failed', error.message
+    subject = tree(parallel_all(leaf('active'), BM.leaf(InspectRaises.new)))
+    error = assert_raises(RangeError) { subject.tick(script, 0) }
+    assert_match(/must be one of :success, :failure, :running/, error.message)
     assert_equal 1, script.count(halted('active'))
     script.assert_idle!
   end
@@ -144,8 +129,8 @@ class EdgeCaseTest < Minitest::Test
     observer = Observer.new
     bomb = Object.new
     def bomb.tick(_ctx, _now) = raise(FatalProbe, 'fatal')
-    subject = tree(BM.parallel(leaf('active'), BM.leaf(bomb)))
-    assert_raises(FatalProbe) { subject.tick(script, now: 0, observer:) }
+    subject = tree(parallel_all(leaf('active'), BM.leaf(bomb)))
+    assert_raises(FatalProbe) { subject.tick_observed(script, 0, observer) }
     assert_equal [[:ticked, 1, :running]], observer.reports
     assert_equal [tick('active'), halted('active')], script.log
     script.assert_idle!
@@ -156,36 +141,30 @@ class EdgeCaseTest < Minitest::Test
     script = Script.new
     observer = Observer.new
     observer.trip_tick = 0
-    subject = tree(BM.parallel(leaf('a'), leaf('b')))
-    assert_raises(ProbeError) { subject.tick(script, now: 0, observer:) }
+    subject = tree(parallel_all(leaf('a'), leaf('b')))
+    assert_raises(ProbeError) { subject.tick_observed(script, 0, observer) }
     assert_equal [1, 1], %w[a b].map { script.count(halted(_1)) }
     refute observer.reports.any? { _1.first == :halted }
     refute subject.running?
     script.assert_idle!
   end
 
-  def test_timers_round_exactly_and_overflow_does_not_fire
-    # Rational avoids floating-point loss near 2**64.
+  def test_timers_are_exact_and_a_deadline_past_the_clock_never_fires
     script = Script.new
-    max = (2**64) - 1
-    subject = tree(BM.sleep(Rational(max, 1_000_000_000)))
-    assert_equal :running, subject.tick(script, now: 0)
+    max = (((2**64) - 1) * 1_000_000_000) + 999_999_999 # Duration::MAX in nanoseconds
+    subject = tree(BM.sleep(max))
+    assert_equal :running, subject.tick(script, 0)
     assert_equal max, subject.next_deadline
-    assert_equal :success, subject.tick(script, now: max)
+    assert_equal :success, subject.tick(script, max)
     assert_nil subject.next_deadline
 
-    subject = tree(leaf('work').timeout(Rational(2, 1_000_000_000)))
-    assert_equal :running, subject.tick(script, now: max - 1)
+    subject = tree(leaf('work').timeout(2))
+    assert_equal :running, subject.tick(script, max - 1)
     assert_nil subject.next_deadline
-    assert_equal :running, subject.tick(script, now: max)
+    assert_equal :running, subject.tick(script, max)
     subject.halt(script)
     script.assert_idle!
-
-    subject = tree(BM.sleep(Rational(1, 2_000_000_000)))
-    assert_equal :running, subject.tick(script, now: 0)
-    assert_equal 1, subject.next_deadline # Exactly half a nanosecond rounds up.
-    assert_equal :success, subject.tick(script, now: 1)
-    assert_raises(BM::BuildError) { tree(BM.sleep(Rational(max + 1, 1_000_000_000))) }
+    assert_raises(RangeError) { BM.sleep(max + 1) }
   end
 
   def test_definition_copies_children_but_keeps_mutable_leaf_objects
@@ -194,7 +173,7 @@ class EdgeCaseTest < Minitest::Test
     subject = tree(BM::Node::Sequence.new(children:))
     children.clear
     script.set('a', :success)
-    assert_equal :running, subject.tick(script, now: 0)
+    assert_equal :running, subject.tick(script, 0)
     assert_equal [tick('a'), tick('b')], script.log
     subject.halt(script)
     script.assert_idle!
@@ -204,10 +183,14 @@ class EdgeCaseTest < Minitest::Test
     %i[tick halt running? next_deadline].each do |operation|
       leaf_object = Object.new
       leaf_object.define_singleton_method(:tick) do |ctx, _now|
-        operation == :tick ? ctx.tick(ctx, now: 0) : ctx.public_send(operation)
+        case operation
+        when :tick then ctx.tick(ctx, 0)
+        when :halt then ctx.halt(ctx)
+        else ctx.public_send(operation)
+        end
       end
       subject = tree(BM.leaf(leaf_object))
-      assert_raises(BM::ReentrantCallError) { subject.tick(subject, now: 0) }
+      assert_raises(RuntimeError) { subject.tick(subject, 0) }
       refute subject.running?
     end
   end
@@ -237,8 +220,8 @@ class EdgeCaseTest < Minitest::Test
     assert weak.weakref_alive?
     script = Script.new
     observer = Observer.new
-    assert_equal :running, subject.tick(script, now: 0, observer:)
-    subject.halt(script, observer:)
+    assert_equal :running, subject.tick_observed(script, 0, observer)
+    subject.halt_observed(script, observer)
     assert_equal [[:ticked, 0, :running], [:halted, 0]], observer.reports
     script.assert_idle!
     assert weak.weakref_alive?
@@ -258,8 +241,8 @@ class EdgeCaseTest < Minitest::Test
     script = Script.new
     bomb = Object.new
     def bomb.tick(_ctx, _now) = raise(ProbeError, 'fresh exception payload')
-    subject = tree(BM.parallel(BM.leaf(GcHalt.new), BM.leaf(bomb)))
-    error = assert_raises(ProbeError) { subject.tick(script, now: 0) }
+    subject = tree(parallel_all(BM.leaf(GcHalt.new), BM.leaf(bomb)))
+    error = assert_raises(ProbeError) { subject.tick(script, 0) }
     assert_equal 'fresh exception payload', error.message
     script.assert_idle!
   end
@@ -275,18 +258,15 @@ class EdgeCaseTest < Minitest::Test
   def test_real_named_state_machine_helpers_and_cancellation
     job = Job.new
     access = ->(ctx) { ctx }
-    fire = BM::Machine::Fire.new(access, :start, machine: :job)
+    fire = BM::Machine::Fire.new(access, :job, :start)
     assert_equal :success, fire.tick(job, 0)
     assert_equal :failure, fire.tick(job, 0)
-    condition = BM::Machine::InState.new(access, :started, machine: :job)
+    condition = BM::Machine::InState.new(access, :job, [:started])
     assert_equal :success, condition.tick(job, 0)
-    waiter = BM::Machine::WaitFor.new(
-      access, success: :completed, failure: :cancelled, on_halt: :cancel, machine: :job
-    )
+    waiter = BM::Machine::WaitFor.new(access, :job, [:completed], [:cancelled], :cancel)
     subject = tree(BM.leaf(waiter))
-    assert_equal :running, subject.tick(job, now: 0)
-    subject.halt(job)
-    subject.halt(job)
+    assert_equal :running, subject.tick(job, 0)
+    assert_equal %i[halted already_idle], Array.new(2) { subject.halt(job) }
     assert_equal :cancelled, job.job_name
     assert_equal :failure, waiter.tick(job, 0)
   end

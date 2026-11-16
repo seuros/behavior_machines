@@ -51,11 +51,11 @@ macro_rules! impl_affine_form {
 pub struct Bit(Affine);
 
 impl Bit {
-    /// The constant bit.
-    #[must_use]
-    pub const fn constant(set: bool) -> Self {
-        Self(Affine::constant(if set { 1.0 } else { 0.0 }))
-    }
+    /// The constant bit 0.
+    pub const ZERO: Self = Self(Affine::constant(0.0));
+
+    /// The constant bit 1.
+    pub const ONE: Self = Self(Affine::constant(1.0));
 
     /// Consumes the bit, returning its affine form.
     #[must_use]
@@ -79,9 +79,22 @@ impl Bit {
     }
 }
 
+/// The constant bit of a decided condition: [`Bit::ONE`] if it holds.
+impl From<bool> for Bit {
+    fn from(set: bool) -> Self {
+        if set { Self::ONE } else { Self::ZERO }
+    }
+}
+
 impl_affine_form!(
     Bit,
-    "Treats `wire` as a bit.\n\nThe caller promises the wire holds exactly 0 or 1. A false promise does\nnot trip an assertion; it silently produces a circuit that computes\nsomething else, so establish it from an input declaration or from a\nconstruction in this module."
+    concat!(
+        "Treats `wire` as a bit.\n\n",
+        "The caller promises the wire holds exactly 0 or 1. A false promise does\n",
+        "not trip an assertion; it silently produces a circuit that computes\n",
+        "something else, so establish it from an input declaration or from a\n",
+        "construction in this module.",
+    )
 );
 
 impl Not for Bit {
@@ -134,7 +147,10 @@ impl Count {
 
 impl_affine_form!(
     Count,
-    "Treats `wire` as a non-negative integer count, the same kind of\npromise [`Bit::assume`] takes."
+    concat!(
+        "Treats `wire` as a non-negative integer count, the same kind of\n",
+        "promise [`Bit::assume`] takes.",
+    )
 );
 
 /// Appends operations to a [`Circuit`] using the bit algebra.
@@ -164,13 +180,10 @@ impl Builder {
         self.circuit
     }
 
-    /// The wire of input cell `index`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `index` is outside the circuit's input width.
+    /// The wire of input cell `index`, or `None` past the circuit's input
+    /// width.
     #[must_use]
-    pub fn input(&self, index: u32) -> Wire {
+    pub const fn input(&self, index: u32) -> Option<Wire> {
         self.circuit.input(index)
     }
 
@@ -188,7 +201,7 @@ impl Builder {
     /// is 1 at zero and 0 at every larger integer.
     pub fn is_zero(&mut self, count: &Count) -> Bit {
         if let Some(value) = count.as_constant() {
-            return Bit::constant(value == 0.0);
+            return Bit::from(value == 0.0);
         }
         let wire = self.relu(count.0.clone().scaled(-1.0).offset(1.0));
         Bit::assume(wire)
@@ -198,7 +211,7 @@ impl Builder {
     /// constant.
     pub fn at_least(&mut self, count: &Count, threshold: f32) -> Bit {
         if let Some(value) = count.as_constant() {
-            return Bit::constant(value >= threshold);
+            return Bit::from(value >= threshold);
         }
         let shifted = count.0.clone().offset(1.0 - threshold);
         let high = self.relu(shifted.clone());
@@ -212,7 +225,7 @@ impl Builder {
     /// costs nothing.
     pub fn or(&mut self, left: &Bit, right: &Bit) -> Bit {
         if left.as_constant() == Some(true) || right.as_constant() == Some(true) {
-            return Bit::constant(true);
+            return Bit::ONE;
         }
         if left.as_constant() == Some(false) {
             return right.clone();
@@ -233,7 +246,7 @@ impl Builder {
             return left.clone();
         }
         if left.as_constant() == Some(false) || right.as_constant() == Some(false) {
-            return Bit::constant(false);
+            return Bit::ZERO;
         }
         let wire = self.circuit.push(Op::Reglu {
             left: left.0.clone(),
