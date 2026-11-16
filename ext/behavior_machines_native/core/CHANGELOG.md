@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/seuros/behavior_machines/compare/behavior-machines-v0.4.0...behavior-machines-v0.4.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* lower deep decorator chains without recursing in post_order ([345fb13](https://github.com/seuros/behavior_machines/commit/345fb138420843714ee77b12363a4c64f3341ecb))
+
 ## [0.4.0](https://github.com/seuros/behavior_machines/compare/behavior-machines-v0.3.1...behavior-machines-v0.4.0) (2026-11-16)
 
 
