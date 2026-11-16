@@ -1,6 +1,6 @@
 //! Native entry point.
 use magnus::{Error, Module, Object, RModule, Ruby, function, method, prelude::*};
-use matryona_machines::ruby::{SymbolNames, Symbols};
+use matryona_machines::ruby::{Class, SymbolNames, Symbols};
 
 use crate::classes;
 use crate::names::{Halts, Refusals, Statuses};
@@ -28,5 +28,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     class.define_method("running?", method!(NativeTree::is_running, 0))?;
     class.define_method("next_deadline", method!(NativeTree::next_deadline, 0))?;
     class.define_method("size", method!(NativeTree::size, 0))?;
-    Ok(())
+    // `new` answers a Tree: its class is fixed now, before it runs.
+    Class::pin_wrapped::<NativeTree>(ruby, class).map(drop)
 }

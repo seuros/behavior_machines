@@ -19,7 +19,7 @@ repository = "https://github.com/seuros/behavior_machines"
 [workspace.dependencies]
 behavior-machines = { path = "ext/behavior_machines_native/core", version = ">=0.4.0" }
 state-machines = { version = ">=0.34", default-features = false }
-matryona-machines = { version = ">=0.5", default-features = false }
+matryona-machines = { version = ">=0.6", default-features = false }
 magnus = { version = "0.9.3", default-features = false }
 # Nothing here calls rb-sys directly: this is the compiled fallback that
 # implements the stable API for a Ruby rb-sys ships no pre-generated bindings
