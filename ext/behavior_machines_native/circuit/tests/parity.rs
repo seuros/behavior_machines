@@ -56,7 +56,12 @@ fn scripted(tree: &Node<()>) -> Node<Scripted> {
 ///
 /// `script` holds one status per leaf per tick, laid out tick-major.
 fn compare(tree: &Node<()>, leaves: usize, ticks: usize, script: &[Status]) {
-    let Ok(mut engine) = Tree::<_, 64>::new(scripted(tree)) else {
+    compare_within::<64>(tree, leaves, ticks, script);
+}
+
+/// [`compare`] against an engine of `N` slots, for trees past 64 nodes.
+fn compare_within<const N: usize>(tree: &Node<()>, leaves: usize, ticks: usize, script: &[Status]) {
+    let Ok(mut engine) = Tree::<_, N>::new(scripted(tree)) else {
         panic!("the tree is valid")
     };
     let Ok(lowered) = Lowered::new(tree) else {
@@ -245,6 +250,38 @@ fn a_memory_cursor_past_u16_matches_the_engine() {
         assert_eq!(state.cursor(0), Some(0), "the sequence finished");
     };
     let Ok(worker) = std::thread::Builder::new().stack_size(256 << 20).spawn(run) else {
+        panic!("a test thread spawns")
+    };
+    assert!(worker.join().is_ok(), "the engine and the circuit agree");
+}
+
+// Bug: a reactive composite's lowering re-summed every earlier stopping point
+// per child, so lowering one took time cubic in its width.
+#[test]
+fn a_wide_reactive_composite_lowers_quickly_and_matches_the_engine() {
+    const WIDTH: usize = 2_048;
+    let run = || {
+        let middle = WIDTH / 2;
+        // Tick 0 runs the last child; tick 1 a middle guard fails and halts
+        // it; tick 2 the middle child runs, tick 3 the first child preempts.
+        let mut script = Vec::with_capacity(WIDTH * 4);
+        for tick in 0..4 {
+            script.extend((0..WIDTH).map(|child| match (tick, child) {
+                (0, child) if child == WIDTH - 1 => Status::Running,
+                (1, child) if child == middle => Status::Failure,
+                (2, child) if child == middle => Status::Running,
+                (3, 0) => Status::Failure,
+                _ => Status::Success,
+            }));
+        }
+        for tree in [
+            Node::reactive_sequence(vec![leaf(); WIDTH]),
+            Node::reactive_fallback(vec![leaf(); WIDTH]),
+        ] {
+            compare_within::<{ WIDTH + 1 }>(&tree, WIDTH, 4, &script);
+        }
+    };
+    let Ok(worker) = std::thread::Builder::new().stack_size(64 << 20).spawn(run) else {
         panic!("a test thread spawns")
     };
     assert!(worker.join().is_ok(), "the engine and the circuit agree");

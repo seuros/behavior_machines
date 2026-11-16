@@ -66,6 +66,15 @@ jobs:
       - name: Run doc tests
         run: cargo test --workspace --doc
 
+      - name: Build docs without and with features
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --no-deps -p behavior-machines
+          cargo doc --no-deps -p behavior-machines --all-features
+          cargo doc --no-deps --workspace
+          cargo doc --no-deps --workspace --all-features
+
       - name: Check formatting
         run: cargo fmt --all --check
 

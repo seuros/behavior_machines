@@ -91,7 +91,7 @@ impl StatusBits {
     }
 
     /// Swaps success and failure, leaving running alone. Free: the
-    /// [`Inverter`](behavior_machines::Node::Inverter) decorator costs no
+    /// [`Inverter`](behavior_machines::Step::Inverter) decorator costs no
     /// operations at all, it relabels two wires.
     #[must_use]
     pub fn inverted(self) -> Self {
@@ -104,8 +104,8 @@ impl StatusBits {
 
     /// Reports any finished child as `forced`, leaving running alone. Free.
     ///
-    /// This is [`ForceSuccess`](behavior_machines::Node::ForceSuccess) and
-    /// [`ForceFailure`](behavior_machines::Node::ForceFailure): the two
+    /// This is [`ForceSuccess`](behavior_machines::Step::ForceSuccess) and
+    /// [`ForceFailure`](behavior_machines::Step::ForceFailure): the two
     /// finished bits merge into one, which is addition of disjoint bits.
     #[must_use]
     pub fn forced(self, forced: Status) -> Self {

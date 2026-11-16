@@ -1,7 +1,14 @@
 use crate::Status;
 
 /// Identifies a node within one compiled tree: its position in a depth-first,
-/// pre-order walk of the [`Node`](crate::Node) definition, with the root at 0.
+#[cfg_attr(
+    feature = "alloc",
+    doc = " pre-order walk of the [`Node`](crate::Node) definition, with the root at 0."
+)]
+#[cfg_attr(
+    not(feature = "alloc"),
+    doc = " pre-order walk of the `Node` definition, with the root at 0."
+)]
 ///
 /// Children are numbered in declaration order: for `IfThenElse` and
 /// `WhileDoElse` that is condition, then the branch it selects on success,

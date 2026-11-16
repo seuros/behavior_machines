@@ -56,7 +56,7 @@
 //!
 //! The depth does not grow with the number of children: every prefix test
 //! reads a sum of bits, and a sum is free. Measured, an ordered composite
-//! saturates at depth 4 reactive and 6 with memory from four children up to
+//! saturates at depth 3 reactive and 6 with memory from four children up to
 //! any width, which `lower/tests.rs` pins.
 //!
 //! # Indexing
@@ -114,6 +114,7 @@ struct Arbitration {
     /// Per child: the walk reached it, so it was ticked.
     reach: Vec<Bit>,
     /// Per child: a stop strictly earlier, so a reactive composite halts it.
+    /// `NOT clear` for a reactive composite, constant zero for a memory one.
     after_stop: Vec<Bit>,
     /// The cursor to store for the next tick.
     next_cursor: Affine,
@@ -244,8 +245,7 @@ impl Lowered {
     pub fn new<L>(steps: impl IntoIterator<Item = Step<L>>) -> Result<Self, Refusal> {
         let (flat, leaves, cursors) = flatten(steps, Self::MAX_NODES)?;
 
-        let mut report_order = Vec::with_capacity(flat.len());
-        post_order(&flat, 0, &mut report_order);
+        let report_order = post_order(&flat);
         let plan = Plan::new(flat.len(), leaves, cursors, report_order);
         let mut builder = Builder::new(plan.cell_count());
         let (raw, arbitrations) = arbitrate(&flat, &plan, &mut builder)?;
@@ -259,22 +259,28 @@ impl Lowered {
     }
 }
 
-/// Appends the subtree rooted at `index` in post-order, children first.
+/// The tree's nodes in post-order, children first.
 ///
 /// This is the order the engine's observer reports nodes in, because
 /// `Slot::tick` reports itself only after ticking its children.
+///
+/// Nesting depth is caller-controlled and the node limit does not bound it,
+/// so this walks with an explicit stack rather than recursing: it visits
+/// root, then children right to left, which is post-order reversed.
 #[expect(clippy::indexing_slicing, reason = "see `# Indexing`")]
-fn post_order(flat: &[Flat], index: usize, order: &mut Vec<usize>) {
-    match &flat[index] {
-        Flat::Leaf { .. } | Flat::Constant(_) => {}
-        Flat::Map { child, .. } => post_order(flat, *child, order),
-        Flat::Ordered { children, .. } => {
-            for child in children {
-                post_order(flat, *child, order);
-            }
+fn post_order(flat: &[Flat]) -> Vec<usize> {
+    let mut order = Vec::with_capacity(flat.len());
+    let mut pending = vec![0];
+    while let Some(index) = pending.pop() {
+        order.push(index);
+        match &flat[index] {
+            Flat::Leaf { .. } | Flat::Constant(_) => {}
+            Flat::Map { child, .. } => pending.push(*child),
+            Flat::Ordered { children, .. } => pending.extend(children),
         }
     }
-    order.push(index);
+    order.reverse();
+    order
 }
 
 /// Pass 2: each node's raw status, bottom-up.
@@ -364,12 +370,14 @@ fn lower_ordered(
     // `none_earlier` answers one bit per input, so all three hold one entry
     // per child.
     for ((passed, earlier), stuck) in all_passed.iter().zip(&before).zip(&blocked) {
-        // `stop` is at-most-one-hot, so the running total of earlier stops is
-        // itself a bit and costs nothing to form.
+        // A stop strictly earlier is exactly an earlier blocked child: the
+        // first one is where the walk stopped. So the total of earlier stops
+        // is `NOT passed`, one shared wire, rather than a sum re-formed over
+        // every earlier stop, which made a wide composite cubic to lower.
         after_stop.push(if cursor.is_some() {
             Bit::ZERO
         } else {
-            Bit::or_disjoint(stop.iter().cloned())
+            !passed.clone()
         });
         reach.push(builder.and(passed, &!earlier.clone())?);
         stop.push(builder.and(passed, stuck)?);

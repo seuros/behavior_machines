@@ -95,7 +95,7 @@ fn depth_does_not_grow_with_width() {
         }
     }
 
-    assert_eq!(composite(4, true).circuit().depth(), 4);
+    assert_eq!(composite(4, true).circuit().depth(), 3);
     assert_eq!(composite(4, false).circuit().depth(), 6);
 }
 
@@ -238,4 +238,45 @@ fn a_definition_past_the_node_limit_is_full() {
     };
     assert!(flatten(steps(), 3).is_ok());
     assert_eq!(flatten(steps(), 2).err(), Some(Refusal::Full));
+}
+
+#[test]
+fn a_deep_decorator_chain_lowers_without_recursion() {
+    // Bug: `post_order` recursed once per nesting level, so a chain well under
+    // `MAX_NODES` overflowed the stack in `Lowered::new`.
+    const DEPTH: usize = 200_000;
+    let decorator = |level: usize| match level % 5 {
+        2 => Step::<()>::ForceSuccess,
+        4 => Step::ForceFailure,
+        _ => Step::Inverter,
+    };
+    // Steps rather than a `Node`, whose recursive `Drop` would overflow first.
+    let steps = (0..DEPTH).map(decorator).chain([Step::Leaf(())]);
+    let lowered = match Lowered::new(steps) {
+        Ok(lowered) => lowered,
+        Err(error) => panic!("a decorator chain is supported: {error}"),
+    };
+
+    let order: Vec<usize> = (0..=DEPTH).rev().collect();
+    assert_eq!(lowered.plan().report_order(), order.as_slice());
+
+    // The tree walk, done as a loop: the leaf's status rewritten by each
+    // decorator from the innermost out.
+    for leaf_status in [Status::Success, Status::Failure, Status::Running] {
+        let expected = (0..DEPTH).rev().fold(leaf_status, |status, level| {
+            match (decorator(level), status) {
+                (_, Status::Running) => Status::Running,
+                (Step::Inverter, Status::Success) => Status::Failure,
+                (Step::Inverter | Step::ForceSuccess, _) => Status::Success,
+                _ => Status::Failure,
+            }
+        });
+        let mut state = crate::State::initial(&lowered);
+        let schedule = match lowered.evaluate(&mut state, &[leaf_status]) {
+            Ok(schedule) => schedule,
+            Err(error) => panic!("the state came from this tree: {error}"),
+        };
+        assert_eq!(schedule.root(), Some(expected), "leaf {leaf_status:?}");
+        assert!((0..=DEPTH).all(|node| schedule.reached(node)));
+    }
 }

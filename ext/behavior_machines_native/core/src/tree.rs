@@ -42,7 +42,14 @@ pub struct Tree<L, const N: usize> {
 
 impl<L, const N: usize> Tree<L, N> {
     /// Compiles a definition given as [`Step`]s in pre-order (a
-    /// [`Node`](crate::Node) with feature `alloc` is such a sequence).
+    #[cfg_attr(
+        feature = "alloc",
+        doc = " [`Node`](crate::Node) with feature `alloc` is such a sequence)."
+    )]
+    #[cfg_attr(
+        not(feature = "alloc"),
+        doc = " `Node` with feature `alloc` is such a sequence)."
+    )]
     ///
     /// # Errors
     ///
