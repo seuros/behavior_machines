@@ -29,7 +29,10 @@ pub enum Step<L> {
     /// Fails immediately.
     AlwaysFailure,
     /// Runs until the duration has passed since it started, then succeeds.
-    /// A zero duration succeeds immediately.
+    /// A zero duration succeeds immediately. The deadline is fixed when the
+    /// node starts; if the start plus the duration exceeds `Duration::MAX`,
+    /// that deadline never fires and the node stays running (the sum is
+    /// neither refused nor clamped).
     Sleep(Duration),
     /// Ticks this many children in order. Fails as soon as one fails and
     /// succeeds once all succeed. A running child is resumed on the next
@@ -79,7 +82,10 @@ pub enum Step<L> {
     /// Fails, halting the child, once the duration has passed since this node
     /// started. The child only ticks strictly before the deadline, so a zero
     /// duration fails without ticking it. To run without a limit, leave the
-    /// decorator out.
+    /// decorator out. The deadline is fixed when the node starts; if the
+    /// start plus the duration exceeds `Duration::MAX`, it never fires and the
+    /// child is never failed for elapsed time (the sum is neither refused nor
+    /// clamped).
     Timeout(Duration),
     /// Runs the child again each time it succeeds, until it has succeeded
     /// `limit` times, then succeeds. Fails as soon as the child fails.
