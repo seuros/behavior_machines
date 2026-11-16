@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "behavior-machines"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "matryona-machines",
  "state-machines",
@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "behavior-machines-circuit"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "behavior-machines",
  "matryona-machines",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "behavior_machines_native"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "behavior-machines",
  "magnus",
