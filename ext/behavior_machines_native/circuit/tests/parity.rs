@@ -207,3 +207,45 @@ fn deeply_nested_matches_the_engine() {
         2,
     );
 }
+
+// Bug: past cursor 65,535 the circuit clamped the saved cursor, resumed at
+// the wrong child, and answered Failure where the engine answered Success.
+#[test]
+fn a_memory_cursor_past_u16_matches_the_engine() {
+    // The engine's slots live inline, so a 65,538-node tree wants a big stack.
+    let run = || {
+        let mut children = vec![Node::AlwaysSuccess; 65_535];
+        children.push(leaf()); // position 65,535
+        children.push(leaf()); // position 65,536
+        let tree = Node::sequence(children);
+        let Ok(mut engine) = Tree::<_, 65_538>::new(scripted(&tree)) else {
+            panic!("the tree fits")
+        };
+        let Ok(lowered) = Lowered::new(&tree) else {
+            panic!("every node is supported")
+        };
+        let mut state = State::initial(&lowered);
+        let script = [
+            [Status::Success, Status::Running],
+            [Status::Failure, Status::Success],
+        ];
+        for (tick, statuses) in (0_u64..).zip(script) {
+            let mut context = Script {
+                status: statuses.to_vec(),
+                halted: Vec::new(),
+            };
+            let Ok(root) = engine.tick(&mut context, Duration::from_nanos(tick)) else {
+                panic!("time moves forward")
+            };
+            let Ok(schedule) = lowered.evaluate(&mut state, &statuses) else {
+                panic!("the state belongs to this tree")
+            };
+            assert_eq!(schedule.root(), Some(root), "tick {tick}");
+        }
+        assert_eq!(state.cursor(0), Some(0), "the sequence finished");
+    };
+    let Ok(worker) = std::thread::Builder::new().stack_size(256 << 20).spawn(run) else {
+        panic!("a test thread spawns")
+    };
+    assert!(worker.join().is_ok(), "the engine and the circuit agree");
+}

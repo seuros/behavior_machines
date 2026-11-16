@@ -20,6 +20,7 @@
 use alloc::vec::Vec;
 use core::ops::Not;
 
+use crate::Refusal;
 use crate::wire::{Affine, Circuit, Op, Wire};
 
 /// Generates `assume` and `form` inherent methods for a newtype wrapping [`Affine`].
@@ -187,8 +188,27 @@ impl Builder {
         self.circuit.input(index)
     }
 
+    /// Runs a construction that appends several operations, and drops every
+    /// one of them if it is refused, so a refusal leaves the circuit as it
+    /// was.
+    fn whole<T>(
+        &mut self,
+        construct: impl FnOnce(&mut Self) -> Result<T, Refusal>,
+    ) -> Result<T, Refusal> {
+        let before = self.circuit.ops().len();
+        let built = construct(self);
+        if built.is_err() {
+            self.circuit.truncate(before);
+        }
+        built
+    }
+
     /// `max(0, form)`, as one operation.
-    pub fn relu(&mut self, form: Affine) -> Wire {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Full`] if the circuit's wire space is exhausted.
+    pub fn relu(&mut self, form: Affine) -> Result<Wire, Refusal> {
         self.circuit.push(Op::Reglu {
             left: Affine::constant(1.0),
             gate: form,
@@ -199,67 +219,90 @@ impl Builder {
     ///
     /// Valid only for a non-negative integer count, where `max(0, 1 - count)`
     /// is 1 at zero and 0 at every larger integer.
-    pub fn is_zero(&mut self, count: &Count) -> Bit {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Full`] if the circuit's wire space is exhausted.
+    pub fn is_zero(&mut self, count: &Count) -> Result<Bit, Refusal> {
         if let Some(value) = count.as_constant() {
-            return Bit::from(value == 0.0);
+            return Ok(Bit::from(value == 0.0));
         }
-        let wire = self.relu(count.0.clone().scaled(-1.0).offset(1.0));
-        Bit::assume(wire)
+        let wire = self.relu(count.0.clone().scaled(-1.0).offset(1.0))?;
+        Ok(Bit::assume(wire))
     }
 
     /// `[count >= threshold]`, as two operations, or none if the count is
     /// constant.
-    pub fn at_least(&mut self, count: &Count, threshold: f32) -> Bit {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Full`] if the circuit's wire space is exhausted; nothing is
+    /// appended.
+    pub fn at_least(&mut self, count: &Count, threshold: f32) -> Result<Bit, Refusal> {
         if let Some(value) = count.as_constant() {
-            return Bit::from(value >= threshold);
+            return Ok(Bit::from(value >= threshold));
         }
         let shifted = count.0.clone().offset(1.0 - threshold);
-        let high = self.relu(shifted.clone());
-        let low = self.relu(shifted.offset(-1.0));
-        Bit(Affine::new(0.0, [(high, 1.0), (low, -1.0)]))
+        self.whole(|builder| {
+            let high = builder.relu(shifted.clone())?;
+            let low = builder.relu(shifted.offset(-1.0))?;
+            Ok(Bit(Affine::new(0.0, [(high, 1.0), (low, -1.0)])))
+        })
     }
 
     /// `left OR right`, as one operation: `a + b - a × b`.
     ///
     /// Prefer [`Bit::or_disjoint`] when the bits cannot both be set, which
     /// costs nothing.
-    pub fn or(&mut self, left: &Bit, right: &Bit) -> Bit {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Full`] if the circuit's wire space is exhausted.
+    pub fn or(&mut self, left: &Bit, right: &Bit) -> Result<Bit, Refusal> {
         if left.as_constant() == Some(true) || right.as_constant() == Some(true) {
-            return Bit::ONE;
+            return Ok(Bit::ONE);
         }
         if left.as_constant() == Some(false) {
-            return right.clone();
+            return Ok(right.clone());
         }
         if right.as_constant() == Some(false) {
-            return left.clone();
+            return Ok(left.clone());
         }
-        let both = self.and(left, right);
-        Bit(left.0.plus(&right.0).plus(&both.0.scaled(-1.0)))
+        let both = self.and(left, right)?;
+        Ok(Bit(left.0.plus(&right.0).plus(&both.0.scaled(-1.0))))
     }
 
     /// `left AND right`, as one operation.
-    pub fn and(&mut self, left: &Bit, right: &Bit) -> Bit {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Full`] if the circuit's wire space is exhausted.
+    pub fn and(&mut self, left: &Bit, right: &Bit) -> Result<Bit, Refusal> {
         if left.as_constant() == Some(true) {
-            return right.clone();
+            return Ok(right.clone());
         }
         if right.as_constant() == Some(true) {
-            return left.clone();
+            return Ok(left.clone());
         }
         if left.as_constant() == Some(false) || right.as_constant() == Some(false) {
-            return Bit::ZERO;
+            return Ok(Bit::ZERO);
         }
         let wire = self.circuit.push(Op::Reglu {
             left: left.0.clone(),
             gate: right.0.clone(),
-        });
-        Bit::assume(wire)
+        })?;
+        Ok(Bit::assume(wire))
     }
 
     /// `value` when `bit` is 1, and 0 when it is 0, as one operation.
     ///
     /// The gate is rectified, so this is exact for any `value`, including a
     /// negative one.
-    pub fn mask(&mut self, value: &Affine, bit: &Bit) -> Wire {
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Full`] if the circuit's wire space is exhausted.
+    pub fn mask(&mut self, value: &Affine, bit: &Bit) -> Result<Wire, Refusal> {
         self.circuit.push(Op::Reglu {
             left: value.clone(),
             gate: bit.0.clone(),
@@ -272,15 +315,24 @@ impl Builder {
     /// walk get this far" — and it is one rectified gate per position because
     /// [`Builder::is_zero`] is. The result is at-most-one-hot when `and`-ed
     /// with the bits themselves, which is how a stopping child is picked.
-    pub fn none_earlier(&mut self, bits: &[Bit]) -> Vec<Bit> {
-        let mut result = Vec::with_capacity(bits.len());
-        let mut earlier: Vec<Bit> = Vec::with_capacity(bits.len());
-        for bit in bits {
-            let prefix = Count::of(earlier.iter().cloned());
-            result.push(self.is_zero(&prefix));
-            earlier.push(bit.clone());
-        }
-        result
+    ///
+    /// The prefix sum is carried from one position to the next, so a run of
+    /// constant bits costs nothing to sum, however long.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Full`] if the circuit's wire space is exhausted; nothing is
+    /// appended.
+    pub fn none_earlier(&mut self, bits: &[Bit]) -> Result<Vec<Bit>, Refusal> {
+        self.whole(|builder| {
+            let mut result = Vec::with_capacity(bits.len());
+            let mut prefix = Count::constant(0.0);
+            for bit in bits {
+                result.push(builder.is_zero(&prefix)?);
+                prefix = Count(prefix.0.plus(&bit.0));
+            }
+            Ok(result)
+        })
     }
 }
 

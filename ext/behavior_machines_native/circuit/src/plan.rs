@@ -101,8 +101,9 @@ impl Plan {
     #[must_use]
     pub const fn cell_count(&self) -> u32 {
         let cells = self.nodes + self.cursors.len() + self.leaves.len() * 3;
-        // A tree large enough to overflow this would not fit in memory.
-        #[expect(clippy::cast_possible_truncation, reason = "bounded by tree size")]
+        // At most four cells per node, and the lowering refuses a tree past
+        // `Lowered::MAX_NODES` = 2^24 nodes, so this stays below 2^26.
+        #[expect(clippy::cast_possible_truncation, reason = "bounded by MAX_NODES")]
         let cells = cells as u32;
         cells
     }
@@ -167,11 +168,10 @@ impl Plan {
     ) -> Vec<f32> {
         let mut cells = Vec::with_capacity(self.cell_count() as usize);
         cells.extend(running.iter().map(|running| f32::from(u8::from(*running))));
-        cells.extend(
-            cursor
-                .iter()
-                .map(|cursor| f32::from(u16::try_from(*cursor).unwrap_or(u16::MAX))),
-        );
+        // A cursor is a child position, below the node count, which the
+        // lowering keeps within `Lowered::MAX_NODES` = 2^24: exact in `f32`.
+        #[expect(clippy::cast_precision_loss, reason = "a cursor is below 2^24")]
+        cells.extend(cursor.iter().map(|cursor| *cursor as f32));
         for status in leaf_status {
             cells.extend(
                 [Status::Success, Status::Failure, Status::Running]

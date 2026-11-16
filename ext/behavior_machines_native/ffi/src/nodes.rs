@@ -106,6 +106,17 @@ fn list(ruby: &Ruby, value: Value) -> Result<RArray, Error> {
     exact_array(ruby, value, "children must be an Array")
 }
 
+/// A leaf object, which must respond to `tick(ctx, now)`. Asked on every
+/// read, so a leaf swapped in past `initialize` (by `Marshal.load`) is
+/// refused when the tree is built, not when it first ticks.
+fn leaf(ruby: &Ruby, value: Value) -> Result<Value, Error> {
+    if value.respond_to("tick", false)? {
+        Ok(value)
+    } else {
+        Err(type_error(ruby, "a leaf must respond to tick(ctx, now)"))
+    }
+}
+
 fn otherwise(value: Value) -> (Otherwise, Option<Value>) {
     if value.is_nil() {
         (Otherwise::Absent, None)
@@ -143,7 +154,7 @@ fn read(ruby: &Ruby, kind: Kind, fields: &[Value]) -> Result<Read, Error> {
         fixed(make(present), children)
     };
     let read = match kind {
-        Kind::Leaf => fixed(Step::Leaf(at(0)), Few::new()),
+        Kind::Leaf => fixed(Step::Leaf(leaf(ruby, at(0))?), Few::new()),
         Kind::AlwaysSuccess => fixed(Step::AlwaysSuccess, Few::new()),
         Kind::AlwaysFailure => fixed(Step::AlwaysFailure, Few::new()),
         Kind::Sleep => fixed(Step::Sleep(instant(at(0), "duration")?), Few::new()),
@@ -229,11 +240,6 @@ pub fn validate(ruby: &Ruby, node: Value, fields: Value) -> Result<RArray, Error
     }
     let fields = fields.get(..kind.arity()).unwrap_or_default();
     let read = read(ruby, kind, fields)?;
-    if let Step::Leaf(object) = read.step
-        && !object.respond_to("tick", false)?
-    {
-        return Err(type_error(ruby, "a leaf must respond to tick(ctx, now)"));
-    }
     each_child(&read, |child| kind_of(ruby, &classes, child).map(drop))?;
     let mut stored = Few::of(fields);
     if let (Children::List(children), Some(first)) = (&read.children, stored.values.first_mut()) {

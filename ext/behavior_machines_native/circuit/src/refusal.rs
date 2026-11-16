@@ -8,6 +8,13 @@ use behavior_machines::Composite;
 pub enum Refusal {
     /// The definition contains a step this version does not lower.
     Unsupported(Unsupported),
+    /// The definition has more than [`Lowered::MAX_NODES`] nodes, past which
+    /// `f32` no longer holds every child position and cursor exactly, or an
+    /// operation would take a circuit past `u32::MAX` values, the most a
+    /// [`Wire`](crate::Wire) addresses.
+    ///
+    /// [`Lowered::MAX_NODES`]: crate::Lowered::MAX_NODES
+    Full,
     /// A composite step declared no children, which the engine also refuses.
     EmptyComposite(Composite),
     /// The steps ended before every declared child was given, or there were
@@ -107,6 +114,9 @@ impl fmt::Display for Refusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unsupported(node) => write!(formatter, "{node} is not lowered yet"),
+            Self::Full => {
+                formatter.write_str("the definition exceeds what a circuit holds exactly")
+            }
             Self::EmptyComposite(kind) => write!(formatter, "{kind} needs at least one child"),
             Self::Incomplete => formatter.write_str("the steps end before every child is given"),
             Self::Trailing => formatter.write_str("a step follows the complete root"),

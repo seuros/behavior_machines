@@ -4,7 +4,7 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use behavior_machines::{Limit, Node, Otherwise, Threshold};
+use behavior_machines::{Composite, Limit, Node, Otherwise, Threshold};
 
 use crate::Unsupported;
 
@@ -211,4 +211,31 @@ fn an_unsupported_node_is_found_below_a_supported_one() {
         Lowered::new(&tree).unwrap_err(),
         Refusal::Unsupported(Unsupported::Sleep)
     );
+}
+
+// Bug: `Lowered::new` sized a `Vec` from the declared child count and
+// panicked with `capacity overflow` instead of refusing.
+#[test]
+fn a_declared_child_count_past_memory_is_incomplete_not_a_panic() {
+    for step in [
+        Step::<()>::Sequence(usize::MAX),
+        Step::Fallback(usize::MAX),
+        Step::ReactiveSequence(usize::MAX),
+        Step::ReactiveFallback(usize::MAX),
+    ] {
+        assert_eq!(Lowered::new([step]), Err(Refusal::Incomplete));
+    }
+}
+
+#[test]
+fn a_definition_past_the_node_limit_is_full() {
+    let steps = || {
+        [
+            Step::<()>::Sequence(2),
+            Step::AlwaysSuccess,
+            Step::AlwaysFailure,
+        ]
+    };
+    assert!(flatten(steps(), 3).is_ok());
+    assert_eq!(flatten(steps(), 2).err(), Some(Refusal::Full));
 }

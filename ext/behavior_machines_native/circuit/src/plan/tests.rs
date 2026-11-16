@@ -104,14 +104,19 @@ fn the_tick_cells_follow_the_addressed_layout() {
     assert_eq!(at(plan.leaf_status_cell(0, Status::Running)), 0.0);
 }
 
+// Bug: a cursor past `u16::MAX` was clamped to 65,535, so a memory
+// composite resumed at the wrong child.
 #[test]
-fn a_cursor_past_u16_is_clamped_into_its_cell() {
+fn a_cursor_past_u16_reaches_its_cell_exactly() {
     let plan = plan();
-    let cells = plan.cells(&[false; 3], &[u32::MAX], &[Status::Running]);
-    assert_eq!(
-        cells[plan.cursor_cell(0).unwrap() as usize],
-        f32::from(u16::MAX)
-    );
+    for (cursor, cell) in [
+        (65_535, 65_535.0),
+        (65_536, 65_536.0),
+        (16_777_215, 16_777_215.0),
+    ] {
+        let cells = plan.cells(&[false; 3], &[cursor], &[Status::Running]);
+        assert_eq!(cells[plan.cursor_cell(0).unwrap() as usize], cell);
+    }
 }
 
 #[test]

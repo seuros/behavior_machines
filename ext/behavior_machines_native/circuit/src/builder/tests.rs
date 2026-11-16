@@ -54,11 +54,11 @@ fn not_is_free_and_correct() {
 fn and_or_follow_their_truth_tables() {
     // Assignment order is (a, b) = 00, 01, 10, 11 with a the low bit.
     assert_eq!(
-        truth_table(2, |builder, bits| builder.and(&bits[0], &bits[1])),
+        truth_table(2, |builder, bits| builder.and(&bits[0], &bits[1]).unwrap()),
         [false, false, false, true],
     );
     assert_eq!(
-        truth_table(2, |builder, bits| builder.or(&bits[0], &bits[1])),
+        truth_table(2, |builder, bits| builder.or(&bits[0], &bits[1]).unwrap()),
         [false, true, true, true],
     );
 }
@@ -82,7 +82,7 @@ fn is_zero_costs_one_operation_and_detects_zero() {
     let bits: Vec<Bit> = input_bits(&builder, 3);
     let count = Count::of(bits);
     let before = builder.circuit().ops().len();
-    let zero = builder.is_zero(&count);
+    let zero = builder.is_zero(&count).unwrap();
     assert_eq!(
         builder.circuit().ops().len() - before,
         1,
@@ -109,7 +109,7 @@ fn at_least_counts_set_bits() {
         let wanted = threshold as f32;
         let table = truth_table(3, |builder, bits| {
             let count = Count::of(bits.to_vec());
-            builder.at_least(&count, wanted)
+            builder.at_least(&count, wanted).unwrap()
         });
         for (assignment, got) in table.iter().enumerate() {
             let set = u32::try_from(assignment).expect("small").count_ones();
@@ -137,7 +137,7 @@ fn none_earlier_marks_positions_with_nothing_set_before_them() {
     let mut builder = Builder::new(3);
     let bits: Vec<Bit> = input_bits(&builder, 3);
     let before = builder.circuit().ops().len();
-    let none_earlier = builder.none_earlier(&bits);
+    let none_earlier = builder.none_earlier(&bits).unwrap();
     assert_eq!(
         builder.circuit().ops().len() - before,
         2,
@@ -166,10 +166,10 @@ fn none_earlier_with_the_bits_picks_exactly_the_first_one() {
     // so the one-hot property is the lowering's correctness, not a nicety.
     let mut builder = Builder::new(3);
     let bits: Vec<Bit> = input_bits(&builder, 3);
-    let none_earlier = builder.none_earlier(&bits);
+    let none_earlier = builder.none_earlier(&bits).unwrap();
     let mut picked = Vec::new();
     for (bit, none) in bits.iter().zip(&none_earlier) {
-        picked.push(builder.and(bit, none));
+        picked.push(builder.and(bit, none).unwrap());
     }
     let circuit = builder.finish();
 
@@ -199,24 +199,36 @@ fn constants_fold_without_appending_operations() {
     let before = builder.circuit().ops().len();
 
     assert_eq!(
-        builder.is_zero(&Count::constant(0.0)).as_constant(),
+        builder
+            .is_zero(&Count::constant(0.0))
+            .unwrap()
+            .as_constant(),
         Some(true)
     );
     assert_eq!(
-        builder.is_zero(&Count::constant(2.0)).as_constant(),
+        builder
+            .is_zero(&Count::constant(2.0))
+            .unwrap()
+            .as_constant(),
         Some(false)
     );
     assert_eq!(
-        builder.at_least(&Count::constant(2.0), 2.0).as_constant(),
+        builder
+            .at_least(&Count::constant(2.0), 2.0)
+            .unwrap()
+            .as_constant(),
         Some(true)
     );
-    assert_eq!(builder.and(&Bit::ONE, &Bit::ONE).as_constant(), Some(true));
     assert_eq!(
-        builder.and(&Bit::ZERO, &Bit::ONE).as_constant(),
+        builder.and(&Bit::ONE, &Bit::ONE).unwrap().as_constant(),
+        Some(true)
+    );
+    assert_eq!(
+        builder.and(&Bit::ZERO, &Bit::ONE).unwrap().as_constant(),
         Some(false)
     );
     assert_eq!(
-        builder.or(&Bit::ZERO, &Bit::ZERO).as_constant(),
+        builder.or(&Bit::ZERO, &Bit::ZERO).unwrap().as_constant(),
         Some(false)
     );
 

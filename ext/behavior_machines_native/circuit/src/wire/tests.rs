@@ -56,10 +56,12 @@ fn reglu_rectifies_its_gate() {
     for (left, gate, expected) in CASES {
         let mut circuit = Circuit::new(2);
         let (a, b) = (circuit.input(0).unwrap(), circuit.input(1).unwrap());
-        let out = circuit.push(Op::Reglu {
-            left: Affine::wire(a),
-            gate: Affine::wire(b),
-        });
+        let out = circuit
+            .push(Op::Reglu {
+                left: Affine::wire(a),
+                gate: Affine::wire(b),
+            })
+            .unwrap();
         let values = circuit.evaluate(&[*left, *gate]).expect("two inputs");
         assert_eq!(
             values[out.position()],
@@ -73,10 +75,12 @@ fn reglu_rectifies_its_gate() {
 fn layers_place_an_operation_past_everything_it_reads() {
     let mut circuit = Circuit::new(1);
     let a = circuit.input(0).unwrap();
-    let first = circuit.push(Op::Affine(Affine::wire(a)));
+    let first = circuit.push(Op::Affine(Affine::wire(a))).unwrap();
     // Independent of `first`, so it shares its layer.
-    let sibling = circuit.push(Op::Affine(Affine::wire(a)));
-    let dependent = circuit.push(Op::Affine(Affine::new(0.0, [(first, 1.0), (sibling, 1.0)])));
+    let sibling = circuit.push(Op::Affine(Affine::wire(a))).unwrap();
+    let dependent = circuit
+        .push(Op::Affine(Affine::new(0.0, [(first, 1.0), (sibling, 1.0)])))
+        .unwrap();
 
     let layers = circuit.layers();
     assert_eq!(layers[a.position()], 0);
@@ -106,4 +110,26 @@ fn evaluating_with_the_wrong_input_count_is_an_error() {
             given: 1
         }),
     );
+}
+
+// Bug: a push past the `u32` wire space wrapped to position 0 and aliased
+// input 0.
+#[test]
+fn a_push_past_the_wire_space_is_refused_and_changes_nothing() {
+    let mut circuit = Circuit::new(u32::MAX - 1);
+    let last = circuit.push(Op::Affine(Affine::constant(1.0))).unwrap();
+    assert_eq!(last.position(), u32::MAX as usize - 1);
+    let before = circuit.clone();
+    assert_eq!(
+        circuit.push(Op::Affine(Affine::constant(2.0))),
+        Err(Refusal::Full)
+    );
+    assert_eq!(circuit, before);
+
+    let mut full = Circuit::new(u32::MAX);
+    assert_eq!(
+        full.push(Op::Affine(Affine::constant(1.0))),
+        Err(Refusal::Full)
+    );
+    assert_eq!(full, Circuit::new(u32::MAX));
 }

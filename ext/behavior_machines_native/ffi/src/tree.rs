@@ -82,6 +82,22 @@ impl NativeTree {
         cell.as_ref().map(query).ok_or_else(|| reentrant(ruby))
     }
 
+    /// Wraps the call's observer, if any. Asking it for its hooks runs Ruby,
+    /// which may freeze the tree, so frozen is checked again afterwards: the
+    /// last step before the core.
+    fn observer<'a>(
+        this: Obj<Self>,
+        ruby: &'a Ruby,
+        observer: Option<Value>,
+        error: &'a RefCell<Option<Error>>,
+    ) -> Result<Option<RubyObserver<'a>>, Error> {
+        let observer = observer
+            .map(|object| RubyObserver::new(ruby, object, error))
+            .transpose()?;
+        this.check_frozen()?;
+        Ok(observer)
+    }
+
     pub fn tick(ruby: &Ruby, this: Obj<Self>, ctx: Value, now: Value) -> Result<Symbol, Error> {
         Self::ticked(ruby, this, ctx, now, None)
     }
@@ -96,7 +112,8 @@ impl NativeTree {
         Self::ticked(ruby, this, ctx, now, Some(observer))
     }
 
-    /// Frozen first, then the arguments, then the core. Once a leaf or
+    /// Frozen first, then the arguments, then frozen again (converting the
+    /// arguments can run Ruby), then the core. Once a leaf or
     /// observer raises, the rest of the tick runs no Ruby; every leaf still
     /// active is then halted without reports, and the first error raises.
     fn ticked(
@@ -109,9 +126,7 @@ impl NativeTree {
         this.check_frozen()?;
         let instant = instant(now, "now")?;
         let error = RefCell::new(None);
-        let mut observer = observer
-            .map(|object| RubyObserver::new(ruby, object, &error))
-            .transpose()?;
+        let mut observer = Self::observer(this, ruby, observer, &error)?;
         this.with_engine(ruby, |engine| {
             let call = &mut Call {
                 ruby,
@@ -164,9 +179,7 @@ impl NativeTree {
     ) -> Result<Symbol, Error> {
         this.check_frozen()?;
         let error = RefCell::new(None);
-        let mut observer = observer
-            .map(|object| RubyObserver::new(ruby, object, &error))
-            .transpose()?;
+        let mut observer = Self::observer(this, ruby, observer, &error)?;
         let now = ruby.qnil().as_value();
         this.with_engine(ruby, |engine| {
             let call = &mut Call {

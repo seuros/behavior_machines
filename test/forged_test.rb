@@ -5,6 +5,11 @@ require_relative 'test_helper'
 # The native side is the authority: values forged past `initialize`, sealed
 # classes, and classes moved by compaction.
 class ForgedTest < Minitest::Test
+  # A leaf whose marshalled form is a plain class reference.
+  module ForgeableLeaf
+    def self.tick(_ctx, _now) = :success
+  end
+
   # Builds a value past `initialize`: Marshal.load skips it. `from` and `to`
   # are the marshalled bytes of one field, before and after.
   def forge(value, from, to)
@@ -26,6 +31,18 @@ class ForgedTest < Minitest::Test
 
     nested = BM.sequence(BM.always_success, BM.sleep(5).inverter)
     assert_raises(RangeError) { tree(forge(nested, "i\n".b, "i\xFA".b)) }
+  end
+
+  # Bug: a leaf whose payload Marshal swapped for nil built a tree, then tick
+  # raised NoMethodError instead of construction raising TypeError.
+  def test_a_forged_leaf_without_tick_is_refused_when_the_tree_is_built
+    valid = BM.leaf(ForgeableLeaf)
+    payload = Marshal.dump(ForgeableLeaf).byteslice(2..)
+    forged = forge(valid, payload, '0')
+    assert_nil forged.leaf
+    error = assert_raises(TypeError) { tree(forged) }
+    assert_equal 'a leaf must respond to tick(ctx, now)', error.message
+    assert_raises(TypeError) { tree(BM.sequence(BM.always_success, forged.inverter)) }
   end
 
   def test_node_classes_are_sealed

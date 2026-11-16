@@ -197,8 +197,15 @@ The status-rewrite decorators are free: `Inverter` relabels two wires and the
 ## Exactness
 
 Every value in a lowered tree is an integer — a bit, a child index, or a count
-of children — and all of them stay far below 2^24, where `f32` is exact. No
+of children — and all of them stay below the tree's node count. `Lowered::new`
+refuses a definition of more than `Lowered::MAX_NODES` = 2^24 nodes with
+`Refusal::Full`, so every value is below 2^24, where `f32` is exact, and every
+cursor the engine can produce for an accepted tree enters its cell exactly. No
 operation ever rounds, which is checked under `debug_assertions`.
+
+`Circuit::push` and the `Builder` constructions refuse with `Refusal::Full`
+rather than wrap once a circuit holds `u32::MAX` values, the most a `Wire`
+addresses; a refused construction appends nothing.
 
 This is a property of the lowering rather than a tolerance. Note what it rests
 on: conditions are compared by the *host*, at full precision, and enter the

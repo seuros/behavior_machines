@@ -9,7 +9,8 @@
 //! # Why `f32` is exact here
 //!
 //! Every value a lowered behavior tree produces is an integer: a bit, a small
-//! count, or a child index. All of them stay far below `2^24`, where every
+//! count, or a child index. All of them stay below `2^24`, the node limit
+//! [`Lowered::MAX_NODES`](crate::Lowered::MAX_NODES) enforces, where every
 //! integer is representable exactly in `f32`, so no operation in a lowered
 //! tree ever rounds. That is a property of the lowering, not a hope, and
 //! [`Circuit::evaluate`] checks it under `debug_assertions`.
@@ -251,19 +252,30 @@ impl Circuit {
     /// How many values a full evaluation produces.
     #[must_use]
     pub const fn value_count(&self) -> usize {
-        // Cannot overflow: a circuit never holds more than `u32::MAX` values
-        // (see `push`), which fits `usize` on every supported target.
+        // Cannot overflow: `push` keeps the value count at most `u32::MAX`,
+        // which fits `usize` on every supported target.
         self.inputs as usize + self.ops.len()
     }
 
     /// Appends an operation and returns its wire.
-    pub fn push(&mut self, op: Op) -> Wire {
-        let position = self.value_count();
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Full`] if the value table already holds `u32::MAX`
+    /// values, the most a [`Wire`] addresses; nothing is appended.
+    pub fn push(&mut self, op: Op) -> Result<Wire, Refusal> {
+        let position = u32::try_from(self.value_count())
+            .ok()
+            .filter(|position| *position < u32::MAX)
+            .ok_or(Refusal::Full)?;
         self.ops.push(op);
-        // A circuit cannot exceed u32::MAX values: the arena would exhaust
-        // memory long before, since every op carries at least one term.
-        #[expect(clippy::cast_possible_truncation, reason = "bounded by allocation")]
-        Wire(position as u32)
+        Ok(Wire(position))
+    }
+
+    /// Drops every operation past the first `ops`, undoing a construction
+    /// that was refused part way.
+    pub(crate) fn truncate(&mut self, ops: usize) {
+        self.ops.truncate(ops);
     }
 
     /// The layer of every value, inputs first.

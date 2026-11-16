@@ -136,6 +136,29 @@ class TreeTest < Minitest::Test
     assert_equal [tick('a')], script.log
   end
 
+  # Bug: an observer whose respond_to_missing? froze the tree let
+  # tick_observed run the core and mutate the frozen tree.
+  def test_a_tree_frozen_while_reading_the_observer_is_not_ticked_or_halted
+    script = Script.new
+    subject = tree(leaf('a'))
+    freezer = Object.new
+    freezer.define_singleton_method(:respond_to_missing?) do |_name, _private|
+      subject.freeze
+      false
+    end
+
+    assert_raises(FrozenError) { subject.tick_observed(script, 0, freezer) }
+    refute_predicate subject, :running?
+    assert_empty script.log
+
+    running = tree(leaf('b'))
+    assert_equal :running, running.tick(script, 0)
+    subject = running
+    assert_raises(FrozenError) { running.halt_observed(script, freezer) }
+    assert_predicate running, :running?
+    assert_equal [tick('b')], script.log
+  end
+
   def test_every_shape_resets_to_fresh_after_finishing_or_halting
     Lifecycle.shapes.each_index do |shape|
       27.times do |first|

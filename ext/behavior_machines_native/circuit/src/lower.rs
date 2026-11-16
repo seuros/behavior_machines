@@ -71,13 +71,17 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Not;
 
-use behavior_machines::{Composite, Status, Step};
+use behavior_machines::{Status, Step};
 
 use crate::builder::{Bit, Builder, Count};
 use crate::plan::Plan;
-use crate::refusal::{Refusal, Unsupported};
+use crate::refusal::Refusal;
 use crate::status::StatusBits;
 use crate::wire::{Affine, Circuit};
+
+mod flatten;
+
+use flatten::flatten;
 
 /// A node kind, flattened. Child links are indices into the flat list, which
 /// are also node ids.
@@ -140,6 +144,15 @@ pub struct Lowered {
 }
 
 impl Lowered {
+    /// The most nodes a lowered tree may have: 2^24.
+    ///
+    /// The circuit computes in `f32`, which holds every integer exactly only
+    /// up to 2^24. Every value a lowered tree produces (a child position, a
+    /// cursor, a count of children) is below its node count, so this bound
+    /// keeps every one exact, and keeps the input cells (at most four per
+    /// node) and the operations well inside the `u32` wire space.
+    pub const MAX_NODES: usize = 1 << 24;
+
     /// The circuit to evaluate.
     #[must_use]
     pub const fn circuit(&self) -> &Circuit {
@@ -225,135 +238,24 @@ impl Lowered {
     /// [`Refusal::Unsupported`] for a step this version does not lower,
     /// [`Refusal::EmptyComposite`] for a childless composite,
     /// [`Refusal::Incomplete`] if the steps end before every child is given,
-    /// and [`Refusal::Trailing`] for a step after the complete root.
+    /// [`Refusal::Trailing`] for a step after the complete root, and
+    /// [`Refusal::Full`] for a definition of more than
+    /// [`MAX_NODES`](Self::MAX_NODES) steps.
     pub fn new<L>(steps: impl IntoIterator<Item = Step<L>>) -> Result<Self, Refusal> {
-        let (flat, leaves, cursors) = flatten(steps)?;
+        let (flat, leaves, cursors) = flatten(steps, Self::MAX_NODES)?;
 
         let mut report_order = Vec::with_capacity(flat.len());
         post_order(&flat, 0, &mut report_order);
         let plan = Plan::new(flat.len(), leaves, cursors, report_order);
         let mut builder = Builder::new(plan.cell_count());
-        let (raw, arbitrations) = arbitrate(&flat, &plan, &mut builder);
-        let outputs = reach(&flat, &plan, &raw, &arbitrations, &mut builder);
+        let (raw, arbitrations) = arbitrate(&flat, &plan, &mut builder)?;
+        let outputs = reach(&flat, &plan, &raw, &arbitrations, &mut builder)?;
 
         Ok(Self {
             circuit: builder.finish(),
             plan,
             outputs,
         })
-    }
-}
-
-/// A node still waiting for children while the steps are read.
-struct Open {
-    node: usize,
-    remaining: usize,
-}
-
-/// The flat nodes, the node index of each leaf slot, and of each cursor cell.
-type Flattened = (Vec<Flat>, Vec<usize>, Vec<usize>);
-
-/// Pass 1: the steps are already the engine's pre-order, so a step's position
-/// is its [`NodeId`](behavior_machines::NodeId). Each step is a child of the
-/// innermost node still waiting for children.
-fn flatten<L>(steps: impl IntoIterator<Item = Step<L>>) -> Result<Flattened, Refusal> {
-    let mut flat = Vec::new();
-    let mut leaves = Vec::new();
-    let mut cursors = Vec::new();
-    let mut open: Vec<Open> = Vec::new();
-    for (index, step) in steps.into_iter().enumerate() {
-        if index > 0 && open.is_empty() {
-            return Err(Refusal::Trailing);
-        }
-        if let Some(parent) = open.last_mut() {
-            // An open node awaits at least one child: it is popped below the
-            // moment its count reaches zero, so this never wraps.
-            parent.remaining -= 1;
-            if let Some(node) = flat.get_mut(parent.node) {
-                adopt(node, index);
-            }
-        }
-        let (kind, children) = flat_of(&step, index, &mut leaves, &mut cursors)?;
-        flat.push(kind);
-        if children > 0 {
-            open.push(Open {
-                node: index,
-                remaining: children,
-            });
-        }
-        while open.pop_if(|top| top.remaining == 0).is_some() {}
-    }
-    if flat.is_empty() || !open.is_empty() {
-        return Err(Refusal::Incomplete);
-    }
-    Ok((flat, leaves, cursors))
-}
-
-/// Records `child` as the next child of `parent`.
-fn adopt(parent: &mut Flat, child: usize) {
-    match parent {
-        Flat::Ordered { children, .. } => children.push(child),
-        Flat::Map { child: slot, .. } => *slot = child,
-        Flat::Leaf { .. } | Flat::Constant(_) => {
-            debug_assert!(false, "only composites and decorators wait for children");
-        }
-    }
-}
-
-/// One step as a flat node, and how many children follow it. A memory
-/// composite claims its cursor cell here, before its children, so cells
-/// follow the same pre-order as node ids.
-fn flat_of<L>(
-    step: &Step<L>,
-    index: usize,
-    leaves: &mut Vec<usize>,
-    cursors: &mut Vec<usize>,
-) -> Result<(Flat, usize), Refusal> {
-    let mut ordered = |children: usize, kind, advance_on, reactive: bool| {
-        if children == 0 {
-            return Err(Refusal::EmptyComposite(kind));
-        }
-        let cursor = (!reactive).then(|| {
-            let cell = cursors.len();
-            cursors.push(index);
-            cell
-        });
-        let node = Flat::Ordered {
-            children: Vec::with_capacity(children),
-            advance_on,
-            cursor,
-        };
-        Ok((node, children))
-    };
-    let map = |map| Ok((Flat::Map { child: 0, map }, 1));
-    let unsupported = |node| Err(Refusal::Unsupported(node));
-    match step {
-        Step::Leaf(_) => {
-            let slot = leaves.len();
-            leaves.push(index);
-            Ok((Flat::Leaf { slot }, 0))
-        }
-        Step::AlwaysSuccess => Ok((Flat::Constant(Status::Success), 0)),
-        Step::AlwaysFailure => Ok((Flat::Constant(Status::Failure), 0)),
-        Step::Sequence(n) => ordered(*n, Composite::Sequence, Status::Success, false),
-        Step::ReactiveSequence(n) => {
-            ordered(*n, Composite::ReactiveSequence, Status::Success, true)
-        }
-        Step::Fallback(n) => ordered(*n, Composite::Fallback, Status::Failure, false),
-        Step::ReactiveFallback(n) => {
-            ordered(*n, Composite::ReactiveFallback, Status::Failure, true)
-        }
-        Step::Inverter => map(MapKind::Invert),
-        Step::ForceSuccess => map(MapKind::Force(Status::Success)),
-        Step::ForceFailure => map(MapKind::Force(Status::Failure)),
-        Step::Sleep(_) => unsupported(Unsupported::Sleep),
-        Step::Parallel { .. } => unsupported(Unsupported::Parallel),
-        Step::IfThenElse(_) => unsupported(Unsupported::IfThenElse),
-        Step::WhileDoElse(_) => unsupported(Unsupported::WhileDoElse),
-        Step::Timeout(_) => unsupported(Unsupported::Timeout),
-        Step::Repeat(_) => unsupported(Unsupported::Repeat),
-        Step::RetryUntilSuccessful(_) => unsupported(Unsupported::RetryUntilSuccessful),
-        Step::KeepRunningUntilFailure => unsupported(Unsupported::KeepRunningUntilFailure),
     }
 }
 
@@ -384,7 +286,7 @@ fn arbitrate(
     flat: &[Flat],
     plan: &Plan,
     builder: &mut Builder,
-) -> (Vec<StatusBits>, Vec<Option<Arbitration>>) {
+) -> Result<(Vec<StatusBits>, Vec<Option<Arbitration>>), Refusal> {
     let mut raw: Vec<StatusBits> = vec![StatusBits::unticked(); flat.len()];
     let mut arbitrations: Vec<Option<Arbitration>> = (0..flat.len()).map(|_| None).collect();
 
@@ -411,14 +313,14 @@ fn arbitrate(
                 let child_status: Vec<StatusBits> =
                     children.iter().map(|child| raw[*child].clone()).collect();
                 let (status, arbitration) =
-                    lower_ordered(&child_status, *advance_on, *cursor, plan, builder);
+                    lower_ordered(&child_status, *advance_on, *cursor, plan, builder)?;
                 raw[index] = status;
                 arbitrations[index] = Some(arbitration);
             }
         }
     }
 
-    (raw, arbitrations)
+    Ok((raw, arbitrations))
 }
 
 /// The ordered-composite identity from the [module docs](self).
@@ -428,7 +330,7 @@ fn lower_ordered(
     cursor: Option<usize>,
     plan: &Plan,
     builder: &mut Builder,
-) -> (StatusBits, Arbitration) {
+) -> Result<(StatusBits, Arbitration), Refusal> {
     let cursor_count = cursor.map_or_else(
         || Count::constant(0.0),
         |cell| Count::assume(plan.cursor_wire(cell)),
@@ -444,9 +346,9 @@ fn lower_ordered(
         // reactive composite, whose cursor is pinned to zero.
         #[expect(clippy::cast_precision_loss, reason = "child counts are small")]
         let position = index as f32;
-        let starts_later = builder.at_least(&cursor_count, position + 1.0);
+        let starts_later = builder.at_least(&cursor_count, position + 1.0)?;
         let advance = child.bit(advance_on).clone();
-        let pass = builder.or(&starts_later, &advance);
+        let pass = builder.or(&starts_later, &advance)?;
         before.push(starts_later);
         // The walk stops at the first child it cannot pass. Negation is free.
         blocked.push(!pass);
@@ -454,7 +356,7 @@ fn lower_ordered(
 
     // One prefix test per child, shared by both answers: `none_earlier` here
     // means every earlier child was passed over.
-    let all_passed = builder.none_earlier(&blocked);
+    let all_passed = builder.none_earlier(&blocked)?;
 
     let mut reach: Vec<Bit> = Vec::with_capacity(children.len());
     let mut stop: Vec<Bit> = Vec::with_capacity(children.len());
@@ -469,8 +371,8 @@ fn lower_ordered(
         } else {
             Bit::or_disjoint(stop.iter().cloned())
         });
-        reach.push(builder.and(passed, &!earlier.clone()));
-        stop.push(builder.and(passed, stuck));
+        reach.push(builder.and(passed, &!earlier.clone())?);
+        stop.push(builder.and(passed, stuck)?);
     }
 
     // The composite reports the stopping child's status, or `advance_on` when
@@ -487,7 +389,7 @@ fn lower_ordered(
             if bit.as_constant() == Some(false) || stops_here.as_constant() == Some(false) {
                 continue;
             }
-            let masked = builder.and(stops_here, bit);
+            let masked = builder.and(stops_here, bit)?;
             if picked == Status::Running {
                 running_picks.push((index, masked.clone()));
             }
@@ -507,14 +409,14 @@ fn lower_ordered(
         next_cursor = next_cursor.plus(&running.into_form().scaled(position));
     }
 
-    (
+    Ok((
         status,
         Arbitration {
             reach,
             after_stop,
             next_cursor,
         },
-    )
+    ))
 }
 
 /// Pass 3: which nodes the tick visits, and which running nodes it halts.
@@ -528,7 +430,7 @@ fn reach(
     raw: &[StatusBits],
     arbitrations: &[Option<Arbitration>],
     builder: &mut Builder,
-) -> Outputs {
+) -> Result<Outputs, Refusal> {
     let mut reached: Vec<Bit> = vec![Bit::ZERO; flat.len()];
     // The engine's `halt` returns early on a node that is not running, so a
     // halt never reaches the children of a stopped node.
@@ -546,7 +448,7 @@ fn reach(
 
     for index in 0..flat.len() {
         was_running.push(Bit::assume(Plan::running_wire(index)));
-        halted[index] = builder.and(&halt_called[index], &was_running[index]);
+        halted[index] = builder.and(&halt_called[index], &was_running[index])?;
         untouched.push(!Bit::or_disjoint([
             reached[index].clone(),
             halted[index].clone(),
@@ -572,8 +474,8 @@ fn reach(
                     // had, and a halted one resets to its first child, which
                     // is what `Slot::halt` does.
                     let current = Affine::wire(plan.cursor_wire(*cell));
-                    let advanced = builder.mask(&arbitration.next_cursor, &reached[index]);
-                    let retained = builder.mask(&current, &untouched[index]);
+                    let advanced = builder.mask(&arbitration.next_cursor, &reached[index])?;
+                    let retained = builder.mask(&current, &untouched[index])?;
                     // `flatten` claimed this cell from `cursors`, whose length
                     // is the plan's cursor count.
                     next_cursor[*cell] = Affine::wire(advanced).plus(&Affine::wire(retained));
@@ -584,12 +486,12 @@ fn reach(
                     .zip(&arbitration.reach)
                     .zip(&arbitration.after_stop);
                 for ((child, reach), after_stop) in per_child {
-                    reached[*child] = builder.and(&reached[index], reach);
+                    reached[*child] = builder.and(&reached[index], reach)?;
                     // A reactive composite halts every child after the stop;
                     // `after_stop` is constant zero for a memory composite, so
                     // the `or` folds to the inherited halt.
-                    let sibling = builder.and(&reached[index], after_stop);
-                    halt_called[*child] = builder.or(&halted[index], &sibling);
+                    let sibling = builder.and(&reached[index], after_stop)?;
+                    halt_called[*child] = builder.or(&halted[index], &sibling)?;
                 }
             }
         }
@@ -600,19 +502,19 @@ fn reach(
             // A ticked node's flag is its own result; an untouched one keeps
             // the flag it had. The two cases are disjoint, so the collapse is
             // free.
-            let now_running = builder.and(&reached[index], &raw[index].running);
-            let still = builder.and(&untouched[index], &was_running[index]);
-            Bit::or_disjoint([now_running, still])
+            let now_running = builder.and(&reached[index], &raw[index].running)?;
+            let still = builder.and(&untouched[index], &was_running[index])?;
+            Ok(Bit::or_disjoint([now_running, still]))
         })
-        .collect();
+        .collect::<Result<_, Refusal>>()?;
 
-    Outputs {
+    Ok(Outputs {
         status: raw.to_vec(),
         reached,
         halted,
         next_running,
         next_cursor,
-    }
+    })
 }
 
 #[cfg(test)]
