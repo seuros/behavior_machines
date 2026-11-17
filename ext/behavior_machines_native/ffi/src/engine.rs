@@ -55,7 +55,7 @@ impl Engine {
         each!(self, tree => tree.next_deadline())
     }
 
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         each!(self, tree => tree.len())
     }
 }

@@ -10,6 +10,9 @@ use crate::{Limit, Otherwise, Step, Threshold};
 /// write [`Step`]s: iterating a `Node` yields its steps in pre-order, so it
 /// goes straight to [`Tree::new`](crate::Tree::new), which allocates nothing.
 ///
+/// When no capacity is known up front, [`HeapTree::new`](crate::HeapTree::new)
+/// takes the same steps.
+///
 /// ```
 /// use core::time::Duration;
 /// use behavior_machines::{Node, Tree};

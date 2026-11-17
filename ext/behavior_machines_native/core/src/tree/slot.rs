@@ -23,14 +23,14 @@ pub(super) struct Run<'a, L, C: ?Sized, O: ?Sized> {
 /// One compiled node. `running` is set while the node's last tick returned
 /// `Running` and it has not been halted since; only running nodes are halted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Slot {
+pub struct Slot {
     /// How many slots this node's subtree spans, itself included.
-    pub size: usize,
-    pub running: bool,
+    pub(super) size: usize,
+    pub(super) running: bool,
     /// This node's result within its parent `Parallel`'s current activation,
     /// once it finished; `None` everywhere else.
-    pub outcome: Option<Status>,
-    pub kind: Kind,
+    pub(super) outcome: Option<Status>,
+    pub(super) kind: Kind,
 }
 
 /// Whether a composite restarts from its first child on every tick.
@@ -88,11 +88,11 @@ pub(super) enum Kind {
 
 impl Slot {
     /// A placeholder for a slot the definition does not reach.
-    pub const fn idle() -> Self {
+    pub(super) const fn idle() -> Self {
         Self::new(Kind::Leaf, 0)
     }
 
-    pub const fn new(kind: Kind, size: usize) -> Self {
+    pub(super) const fn new(kind: Kind, size: usize) -> Self {
         Self {
             size,
             running: false,

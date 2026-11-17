@@ -2,7 +2,9 @@
 
 Behavior trees with explicit halt semantics, for `no_std` targets. Building
 and ticking a tree allocate nothing: a `Tree<L, N>` holds its at most `N`
-nodes inline.
+nodes inline. A host that learns the definition at run time takes a
+`HeapTree<L>` (feature `alloc`) instead: same semantics, sized by its
+definition, allocating only while it builds.
 
 A tree is ticked by the host. Each tick advances as far as the leaves allow,
 and every leaf the tree abandons is halted exactly once, in the same call that

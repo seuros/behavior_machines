@@ -12,7 +12,8 @@ readme = "README.md"
 exclude = ["src/**/tests.rs", "src/test_support.rs", "tests/"]
 
 [features]
-# The nested `Node` builder, which allocates. The tree never does.
+# The nested `Node` builder and `HeapTree`, which allocate while building.
+# The inline `Tree` never does.
 alloc = []
 # Leaves that drive a state-machines dynamic machine (`machine` module).
 state-machines = ["dep:state-machines"]

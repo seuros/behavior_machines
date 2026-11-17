@@ -26,4 +26,6 @@ pub use observe::{NodeId, Observer};
 pub use refusal::Refusal;
 pub use status::{Halt, Status};
 pub use step::{Composite, Limit, Otherwise, Step, Threshold};
-pub use tree::Tree;
+#[cfg(any(feature = "alloc", test))]
+pub use tree::HeapTree;
+pub use tree::{Behavior, Tree, storage};

@@ -257,12 +257,14 @@ fn unlimited_loops_do_not_count_runs() {
     // Seeds the counter instead of running 2^64 child runs; an unlimited loop
     // must keep going no matter how many runs came before.
     use super::super::slot::Run;
+    use super::super::storage::sealed::Sealed as _;
     use super::Looping;
 
     for again_on in [Success, Failure] {
         let mut script = Script::default();
         script.set("a", again_on);
         let mut child = tree(leaf("a"));
+        let (slots, leaves) = child.store.parts();
         let (mut runs, mut due) = (u64::MAX, None);
         let looping = Looping {
             again_on,
@@ -273,11 +275,11 @@ fn unlimited_loops_do_not_count_runs() {
         let run = &mut Run {
             ctx: &mut script,
             observer: &mut (),
-            leaves: &child.leaves,
+            leaves,
         };
 
         assert_eq!(
-            super::looped(&mut child.slots[..1], 0, looping, run, at(3)),
+            super::looped(&mut slots[..1], 0, looping, run, at(3)),
             Running
         );
         assert_eq!((runs, due), (u64::MAX, Some(at(3))));

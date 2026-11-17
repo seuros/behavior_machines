@@ -7,7 +7,8 @@ use crate::Composite;
 /// [`Tree::tick`](crate::Tree::tick) runs no leaf and records no clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Refusal {
-    /// The definition has more nodes than the tree's capacity `N`.
+    /// The definition has more nodes than an inline tree's capacity `N`, or
+    /// a heap tree could not allocate room for the next one.
     Full,
     /// A composite step declared no children, so its result would be
     /// arbitrary.
