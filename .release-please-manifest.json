@@ -1,6 +1,6 @@
 {
-  ".": "0.8.2",
-  "ext/behavior_machines_native/circuit": "0.6.1",
-  "ext/behavior_machines_native/core": "0.4.1",
-  "ext/behavior_machines_native/ffi": "0.1.6"
+  ".": "0.9.0",
+  "ext/behavior_machines_native/circuit": "0.6.2",
+  "ext/behavior_machines_native/core": "0.5.0",
+  "ext/behavior_machines_native/ffi": "0.1.7"
 }
