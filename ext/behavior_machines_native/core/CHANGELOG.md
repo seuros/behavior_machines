@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0](https://github.com/seuros/behavior_machines/compare/behavior-machines-v0.4.1...behavior-machines-v0.5.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* HeapTree, a growable tree sharing the fixed tree's semantics
+
+### Features
+
+* HeapTree, a growable tree sharing the fixed tree's semantics ([66ec67e](https://github.com/seuros/behavior_machines/commit/66ec67e4f22c0c402e52435ea7e208768326e6fb))
+
 ## [0.4.1](https://github.com/seuros/behavior_machines/compare/behavior-machines-v0.4.0...behavior-machines-v0.4.1) (2026-11-16)
 
 
