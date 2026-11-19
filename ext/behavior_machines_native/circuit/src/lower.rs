@@ -54,10 +54,12 @@
 //! where `before_i` folds to a constant and the per-child cost drops from
 //! about ten operations to about seven.
 //!
-//! The depth does not grow with the number of children: every prefix test
+//! Up to 64 children the depth does not grow with width: every prefix test
 //! reads a sum of bits, and a sum is free. Measured, an ordered composite
-//! saturates at depth 3 reactive and 6 with memory from four children up to
-//! any width, which `lower/tests.rs` pins.
+//! saturates at depth 3 reactive and 6 with memory from four children to 64,
+//! which `lower/tests.rs` pins. Wider, [`Builder::none_earlier`] materializes
+//! block sums so the stored terms stay `O(n log n)`, at one more layer per
+//! factor of 64 in width.
 //!
 //! # Indexing
 //!

@@ -238,3 +238,111 @@ fn constants_fold_without_appending_operations() {
         "folding must not emit anything"
     );
 }
+
+/// The construction `none_earlier` replaced: every prefix sum read inline.
+fn none_earlier_inline(builder: &mut Builder, bits: &[Bit]) -> Vec<Bit> {
+    let mut prefix = Count::constant(0.0);
+    let mut result = Vec::new();
+    for bit in bits {
+        result.push(builder.is_zero(&prefix).unwrap());
+        prefix = Count(prefix.0.plus(&bit.0));
+    }
+    result
+}
+
+/// A mix of wire, negated, constant, and composite bit forms over `width` inputs.
+fn mixed_bits(builder: &mut Builder, width: u32) -> Vec<Bit> {
+    let wires = input_bits(builder, width);
+    (0..wires.len())
+        .map(|index| match index % 5 {
+            0 => wires[index].clone(),
+            1 => !wires[index].clone(),
+            2 => Bit::ZERO,
+            3 => builder.or(&wires[index], &wires[index - 1]).unwrap(),
+            _ => !builder.and(&wires[index], &wires[index - 2]).unwrap(),
+        })
+        .collect()
+}
+
+/// Every stored affine term in `circuit`.
+fn stored_terms(circuit: &Circuit) -> usize {
+    circuit
+        .ops()
+        .iter()
+        .map(|op| match op {
+            Op::Affine(form) => form.terms().len(),
+            Op::Reglu { left, gate } => left.terms().len() + gate.terms().len(),
+        })
+        .sum()
+}
+
+#[test]
+fn none_earlier_in_blocks_agrees_with_the_inline_sums_on_every_assignment() {
+    for radix in [2, 3, 4] {
+        for width in 0..=9u32 {
+            let mut blocked = Builder::new(width);
+            let bits = mixed_bits(&mut blocked, width);
+            let got = blocked.none_earlier_in_blocks(&bits, radix).unwrap();
+            let blocked = blocked.finish();
+
+            let mut inline = Builder::new(width);
+            let bits = mixed_bits(&mut inline, width);
+            let want = none_earlier_inline(&mut inline, &bits);
+            let inline = inline.finish();
+
+            for assignment in 0..1u32 << width {
+                let cells = cells(assignment, width);
+                let got_values = blocked.evaluate(&cells).unwrap();
+                let want_values = inline.evaluate(&cells).unwrap();
+                for (index, (got, want)) in got.iter().zip(&want).enumerate() {
+                    assert_eq!(
+                        got.form().value(&got_values),
+                        want.form().value(&want_values),
+                        "radix {radix}, width {width}, assignment {assignment}, position {index}",
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn none_earlier_up_to_the_radix_builds_the_inline_circuit() {
+    for width in [1, 2, 17, u32::try_from(PREFIX_RADIX).unwrap()] {
+        let mut blocked = Builder::new(width);
+        let bits = mixed_bits(&mut blocked, width);
+        let got = blocked.none_earlier(&bits).unwrap();
+
+        let mut inline = Builder::new(width);
+        let bits = mixed_bits(&mut inline, width);
+        let want = none_earlier_inline(&mut inline, &bits);
+
+        assert_eq!(got, want, "width {width}");
+        assert_eq!(blocked.finish(), inline.finish(), "width {width}");
+    }
+}
+
+#[test]
+fn none_earlier_stores_terms_linear_in_width() {
+    for width in [256u32, 512, 1024, 2048, 4096] {
+        let mut builder = Builder::new(width);
+        let bits = input_bits(&builder, width);
+        builder.none_earlier(&bits).unwrap();
+        let terms = stored_terms(builder.circuit());
+        let per_bit = 2 * PREFIX_RADIX;
+        assert!(
+            terms <= width as usize * per_bit,
+            "width {width} stores {terms} terms, over {per_bit} per bit",
+        );
+    }
+}
+
+#[test]
+fn none_earlier_past_the_radix_costs_one_layer_per_level() {
+    for (width, depth) in [(64u32, 1), (65, 2), (4096, 2), (4097, 3)] {
+        let mut builder = Builder::new(width);
+        let bits = input_bits(&builder, width);
+        builder.none_earlier(&bits).unwrap();
+        assert_eq!(builder.circuit().depth(), depth, "width {width}");
+    }
+}

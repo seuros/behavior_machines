@@ -17,6 +17,7 @@
 //! two comparisons and four `ReLUs`; a test against zero, which is what
 //! "nothing earlier matched" reduces to, needs one operation.
 
+use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Not;
 
@@ -309,32 +310,85 @@ impl Builder {
         })
     }
 
-    /// Per position: no earlier bit is set. One operation each.
+    /// Per position: no earlier bit is set. One operation each, plus one per
+    /// block of 64 bits past the first.
     ///
     /// This is the prefix test every ordered composite turns on — "did the
     /// walk get this far" — and it is one rectified gate per position because
     /// [`Builder::is_zero`] is. The result is at-most-one-hot when `and`-ed
     /// with the bits themselves, which is how a stopping child is picked.
     ///
-    /// The prefix sum is carried from one position to the next, so a run of
-    /// constant bits costs nothing to sum, however long.
+    /// Up to 64 bits, every prefix sum is read inline and the test sits one
+    /// layer above the bits. Wider, each block of 64 has its sum materialized
+    /// and the block offsets are the same problem one level up: stored terms
+    /// stay `O(n log n)` instead of `O(n²)`, for one more layer per factor of
+    /// 64 in width. A run of constant bits still costs nothing to sum.
     ///
     /// # Errors
     ///
     /// [`Refusal::Full`] if the circuit's wire space is exhausted; nothing is
     /// appended.
     pub fn none_earlier(&mut self, bits: &[Bit]) -> Result<Vec<Bit>, Refusal> {
+        self.none_earlier_in_blocks(bits, PREFIX_RADIX)
+    }
+
+    /// [`Builder::none_earlier`] with a block sum every `radix` bits.
+    fn none_earlier_in_blocks(&mut self, bits: &[Bit], radix: usize) -> Result<Vec<Bit>, Refusal> {
         self.whole(|builder| {
-            let mut result = Vec::with_capacity(bits.len());
-            let mut prefix = Count::constant(0.0);
-            for bit in bits {
-                result.push(builder.is_zero(&prefix)?);
-                prefix = Count(prefix.0.plus(&bit.0));
-            }
-            Ok(result)
+            let forms: Vec<&Affine> = bits.iter().map(Bit::form).collect();
+            builder
+                .prefix_sums(&forms, radix)?
+                .into_iter()
+                .map(|prefix| builder.is_zero(&Count(prefix)))
+                .collect()
         })
     }
+
+    /// Exclusive prefix sums of `items`, reading at most `radix - 1` forms per level.
+    fn prefix_sums(&mut self, items: &[&Affine], radix: usize) -> Result<Vec<Affine>, Refusal> {
+        let radix = radix.max(2);
+        let offsets = if items.len() > radix {
+            let blocks = items.len().div_ceil(radix);
+            let mut sums = Vec::with_capacity(blocks);
+            for block in items.chunks(radix).take(blocks - 1) {
+                let sum = block
+                    .iter()
+                    .fold(Affine::constant(0.0), |total, item| total.plus(item));
+                sums.push(self.materialize(sum)?);
+            }
+            // No prefix reads the last block's total: a free placeholder.
+            sums.push(Affine::constant(0.0));
+            let sums: Vec<&Affine> = sums.iter().collect();
+            self.prefix_sums(&sums, radix)?
+        } else {
+            vec![Affine::constant(0.0)]
+        };
+
+        let mut result = Vec::with_capacity(items.len());
+        for (block, offset) in items.chunks(radix).zip(offsets) {
+            let mut running = offset;
+            if let Some((_, read)) = block.split_last() {
+                for item in read {
+                    let next = running.plus(item);
+                    result.push(core::mem::replace(&mut running, next));
+                }
+            }
+            result.push(running);
+        }
+        Ok(result)
+    }
+
+    /// `form` as one wire, unless it already reads at most one.
+    fn materialize(&mut self, form: Affine) -> Result<Affine, Refusal> {
+        if form.terms().len() <= 1 {
+            return Ok(form);
+        }
+        Ok(Affine::wire(self.circuit.push(Op::Affine(form))?))
+    }
 }
+
+/// Bits [`Builder::none_earlier`] sums inline before materializing block sums.
+const PREFIX_RADIX: usize = 64;
 
 /// The sum of a sequence of bits, normalized. Free: addition only.
 fn sum_bits(bits: impl IntoIterator<Item = Bit>) -> Affine {

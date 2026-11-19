@@ -6,7 +6,7 @@ use core::time::Duration;
 
 use behavior_machines::{Composite, Limit, Node, Otherwise, Threshold};
 
-use crate::Unsupported;
+use crate::{Op, Unsupported};
 
 use crate::test_support::{leaf, lower, two_leaf_sequence};
 
@@ -93,10 +93,39 @@ fn depth_does_not_grow_with_width() {
                 "width {width}, reactive {reactive}",
             );
         }
+        // Past 64 the block sums are one more layer, up to 64 × 64.
+        for width in [65, 2048] {
+            assert_eq!(
+                composite(width, reactive).circuit().depth(),
+                saturated + 1,
+                "width {width}, reactive {reactive}",
+            );
+        }
     }
 
     assert_eq!(composite(4, true).circuit().depth(), 3);
     assert_eq!(composite(4, false).circuit().depth(), 6);
+}
+
+#[test]
+fn a_wide_composite_stores_terms_near_linear_in_width() {
+    // Inline prefix sums stored about 4 terms per earlier child per child
+    // with memory: 8.4M at width 2048.
+    for reactive in [true, false] {
+        let terms: usize = composite(2048, reactive)
+            .circuit()
+            .ops()
+            .iter()
+            .map(|op| match op {
+                Op::Affine(form) => form.terms().len(),
+                Op::Reglu { left, gate } => left.terms().len() + gate.terms().len(),
+            })
+            .sum();
+        assert!(
+            terms <= 2048 * 256,
+            "width 2048, reactive {reactive}: {terms} terms",
+        );
+    }
 }
 
 #[test]
