@@ -133,11 +133,7 @@ impl Count {
     /// `total - Σ bits`, a count when the bits cannot exceed `total`.
     #[must_use]
     pub fn shortfall(total: f32, bits: impl IntoIterator<Item = Bit>) -> Self {
-        let mut form = Affine::constant(total);
-        for bit in bits {
-            form = form.plus(&bit.0.scaled(-1.0));
-        }
-        Self(form)
+        Self(sum_bits(bits).scaled(-1.0).offset(total))
     }
 
     /// The constant value of a count that is already decided.
@@ -351,10 +347,7 @@ impl Builder {
             let blocks = items.len().div_ceil(radix);
             let mut sums = Vec::with_capacity(blocks);
             for block in items.chunks(radix).take(blocks - 1) {
-                let sum = block
-                    .iter()
-                    .fold(Affine::constant(0.0), |total, item| total.plus(item));
-                sums.push(self.materialize(sum)?);
+                sums.push(self.materialize(sum_forms(block.iter().copied()))?);
             }
             // No prefix reads the last block's total: a free placeholder.
             sums.push(Affine::constant(0.0));
@@ -392,8 +385,19 @@ const PREFIX_RADIX: usize = 64;
 
 /// The sum of a sequence of bits, normalized. Free: addition only.
 fn sum_bits(bits: impl IntoIterator<Item = Bit>) -> Affine {
-    bits.into_iter()
-        .fold(Affine::constant(0.0), |total, bit| total.plus(&bit.0))
+    let bits: Vec<Bit> = bits.into_iter().collect();
+    sum_forms(bits.iter().map(Bit::form))
+}
+
+/// The sum of affine forms, normalized once rather than once per form.
+pub fn sum_forms<'a>(forms: impl IntoIterator<Item = &'a Affine>) -> Affine {
+    let mut bias = 0.0;
+    let mut terms = Vec::new();
+    for form in forms {
+        bias += form.bias();
+        terms.extend_from_slice(form.terms());
+    }
+    Affine::new(bias, terms)
 }
 
 #[cfg(test)]

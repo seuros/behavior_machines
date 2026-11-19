@@ -26,6 +26,23 @@ fn equal_sums_written_differently_compare_equal() {
 }
 
 #[test]
+fn plus_merges_into_the_same_normal_form_as_new() {
+    let circuit = Circuit::new(5);
+    let w: Vec<Wire> = (0..5).map(|index| circuit.input(index).unwrap()).collect();
+    let left = Affine::new(1.0, [(w[0], 1.0), (w[2], 2.0), (w[3], -1.0)]);
+    let right = Affine::new(-3.0, [(w[1], 4.0), (w[2], -2.0), (w[3], 2.0), (w[4], 1.0)]);
+    let concatenated = left.terms().iter().chain(right.terms()).copied();
+    let expected = Affine::new(-2.0, concatenated);
+    assert_eq!(left.plus(&right), expected);
+    assert_eq!(right.plus(&left), expected);
+    assert_eq!(
+        left.plus(&right).terms(),
+        &[(w[0], 1.0), (w[1], 4.0), (w[3], 1.0), (w[4], 1.0)],
+        "w2 cancels and drops out",
+    );
+}
+
+#[test]
 #[expect(clippy::suboptimal_flops, reason = "the expected value is spelled out")]
 fn scaling_and_offsetting_follow_the_arithmetic() {
     let (a, _) = wires();

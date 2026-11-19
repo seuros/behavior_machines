@@ -106,8 +106,40 @@ impl Affine {
     /// The sum of two forms, normalized.
     #[must_use]
     pub fn plus(&self, other: &Self) -> Self {
-        let terms = self.terms.iter().chain(&other.terms).copied();
-        Self::new(self.bias + other.bias, terms)
+        // Both sides are already normalized, so one merge keeps the result
+        // sorted, deduplicated, and free of zero coefficients without a sort.
+        let mut terms = Vec::with_capacity(self.terms.len() + other.terms.len());
+        let mut left = self.terms.iter().copied().peekable();
+        let mut right = other.terms.iter().copied().peekable();
+        loop {
+            let next = match (left.peek(), right.peek()) {
+                (Some(&(a, x)), Some(&(b, y))) if a == b => {
+                    left.next();
+                    right.next();
+                    (a, x + y)
+                }
+                (Some(&(a, _)), Some(&(b, y))) if b < a => {
+                    right.next();
+                    (b, y)
+                }
+                (Some(&term), _) => {
+                    left.next();
+                    term
+                }
+                (None, Some(&term)) => {
+                    right.next();
+                    term
+                }
+                (None, None) => break,
+            };
+            if next.1 != 0.0 {
+                terms.push(next);
+            }
+        }
+        Self {
+            bias: self.bias + other.bias,
+            terms,
+        }
     }
 
     /// The constant value of a form with no terms.

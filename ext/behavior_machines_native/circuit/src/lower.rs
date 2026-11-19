@@ -75,7 +75,7 @@ use core::ops::Not;
 
 use behavior_machines::{Status, Step};
 
-use crate::builder::{Bit, Builder, Count};
+use crate::builder::{Bit, Builder, Count, sum_forms};
 use crate::plan::Plan;
 use crate::refusal::Refusal;
 use crate::status::StatusBits;
@@ -388,7 +388,7 @@ fn lower_ordered(
     // The composite reports the stopping child's status, or `advance_on` when
     // the walk ran off the end. A stopping child never holds the `advance_on`
     // bit, so that bit stays free for the ran-off-the-end case.
-    let mut status = StatusBits::unticked();
+    let (mut success, mut failure, mut running) = (Vec::new(), Vec::new(), Vec::new());
     let mut running_picks = Vec::with_capacity(children.len());
     for (index, (child, stops_here)) in children.iter().zip(&stop).enumerate() {
         for picked in [Status::Success, Status::Failure, Status::Running] {
@@ -403,8 +403,23 @@ fn lower_ordered(
             if picked == Status::Running {
                 running_picks.push((index, masked.clone()));
             }
-            *status.bit_mut(picked) = Bit::or_disjoint([status.bit(picked).clone(), masked]);
+            match picked {
+                Status::Success => &mut success,
+                Status::Failure => &mut failure,
+                Status::Running => &mut running,
+            }
+            .push(masked);
         }
+    }
+    // Summed once per status: folding each pick into the running total
+    // re-normalized it per child, quadratic in width to lower.
+    let mut status = StatusBits::unticked();
+    for (picked, bits) in [
+        (Status::Success, success),
+        (Status::Failure, failure),
+        (Status::Running, running),
+    ] {
+        *status.bit_mut(picked) = Bit::or_disjoint(bits);
     }
     let any_stop = Bit::or_disjoint(stop.iter().cloned());
     *status.bit_mut(advance_on) = any_stop.not();
@@ -412,12 +427,15 @@ fn lower_ordered(
     // The cursor remembers where to resume: the stopping child's position when
     // it is still running, and zero otherwise, which is also what the engine
     // stores when a composite finishes.
-    let mut next_cursor = Affine::constant(0.0);
-    for (index, running) in running_picks {
-        #[expect(clippy::cast_precision_loss, reason = "child counts are small")]
-        let position = index as f32;
-        next_cursor = next_cursor.plus(&running.into_form().scaled(position));
-    }
+    let positioned: Vec<Affine> = running_picks
+        .into_iter()
+        .map(|(index, running)| {
+            #[expect(clippy::cast_precision_loss, reason = "child counts are small")]
+            let position = index as f32;
+            running.into_form().scaled(position)
+        })
+        .collect();
+    let next_cursor = sum_forms(&positioned);
 
     Ok((
         status,
