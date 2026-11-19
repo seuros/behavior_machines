@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.3](https://github.com/seuros/behavior_machines/compare/behavior-machines-circuit-v0.6.2...behavior-machines-circuit-v0.6.3) (2026-11-19)
+
+
+### Performance Improvements
+
+* bound none_earlier's stored terms with block sums past 64 bits ([1785d43](https://github.com/seuros/behavior_machines/commit/1785d437289332a04a472fdb63851d427e900571))
+* lower wide composites without per-term re-normalization ([cf4974d](https://github.com/seuros/behavior_machines/commit/cf4974dd375c2accaa77e405ae319fe6b1aa0cb4))
+
 ## [0.6.2](https://github.com/seuros/behavior_machines/compare/behavior-machines-circuit-v0.6.1...behavior-machines-circuit-v0.6.2) (2026-11-17)
 
 ## [0.6.1](https://github.com/seuros/behavior_machines/compare/behavior-machines-circuit-v0.6.0...behavior-machines-circuit-v0.6.1) (2026-11-16)

@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "behavior-machines-circuit"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "behavior-machines",
  "matryona-machines",
