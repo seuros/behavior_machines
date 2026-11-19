@@ -183,13 +183,14 @@ The consequence is the measured cost, which `lower/tests.rs` pins:
 
 | | depth | operations per child |
 |---|---|---|
-| reactive composite | 4, any width | 7 |
-| memory composite | 6, any width | 10 |
+| reactive composite | 4, up to 64 children | 7 |
+| memory composite | 6, up to 64 children | 10 |
 
-**Depth does not grow with the number of children.** A prefix test reads a sum
-of bits and a sum is free, so a wider composite widens a layer rather than
-adding one — four children and sixty-four children cost the same number of
-sequential steps. Depth grows only with nesting, about two layers per level.
+**Depth grows with nesting and only logarithmically with width.** A prefix
+test reads a sum of bits and a sum is free, so up to 64 children widen a layer
+rather than adding one. Past 64, each block of 64 bits stores its sum as one
+intermediate, keeping stored terms O(n log n): one extra layer up to 4,096
+children, two up to 262,144. Nesting costs about two layers per level.
 
 The status-rewrite decorators are free: `Inverter` relabels two wires and the
 `Force` pair merges two disjoint bits.
